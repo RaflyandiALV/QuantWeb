@@ -1,1 +1,1 @@
-[{"symbol": "CRV-USD", "mode": "MANUAL", "strategy": "MEAN_REVERSAL", "timeframe": "4h", "period": "1y"}]
+[{"symbol": "CRV-USD", "mode": "MANUAL", "strategy": "MEAN_REVERSAL", "timeframe": "4h", "period": "1y"}, {"symbol": "SOL-USD", "mode": "AUTO", "strategy": null, "timeframe": null, "period": null}]
