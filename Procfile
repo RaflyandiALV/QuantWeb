@@ -1,1 +1,1 @@
-web: cd backend && uvicorn main:app --host 0.0.0.0 --port 8000
+web: uvicorn main:app --app-dir backend --host 0.0.0.0 --port 8000
