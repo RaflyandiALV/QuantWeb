@@ -2,7 +2,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from strategy_core import TradingEngine
+try:
+    from backend.strategy_core import TradingEngine
+except ImportError:
+    from strategy_core import TradingEngine
 import pandas as pd
 import json
 import os
@@ -15,6 +18,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 load_dotenv()
+
 
 # --- CONFIGURATION ---
 # --- CONFIGURATION (Ganti agar mengambil dari .env) ---
@@ -193,7 +197,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- DATA MODELS ---
