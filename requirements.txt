@@ -1,9 +1,10 @@
 fastapi
 uvicorn
-yfinance
 pandas
-numpy
-apscheduler
+yfinance
+pandas_ta
 requests
 python-dotenv
+apscheduler
 psycopg2-binary
+pydantic
