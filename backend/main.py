@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,11 +11,17 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from typing import Optional, List, Literal
 from datetime import datetime
 import contextlib
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- CONFIGURATION ---
-TELEGRAM_TOKEN = "8279318385:AAFNKFl9OwgqBp0ISDUleAFAX10LPm87awY"
-TELEGRAM_CHAT_ID = "-1003283770274"
-WATCHLIST_FILE = "watchlist.json"
+# --- CONFIGURATION (Ganti agar mengambil dari .env) ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+DATABASE_URL = os.getenv("DATABASE_URL")
+WATCHLIST_FILE = "watchlist.json" # Tetap ada untuk cadangan jika perlu
 
 # --- HELPER: TELEGRAM SENDER ---
 def send_telegram_alert(message):
@@ -97,7 +104,9 @@ def check_market_signals():
     """
     Bot Loop yang menggunakan logika find_best_strategy_for_symbol
     """
-    watchlist = load_watchlist_data()
+    # Ganti load_watchlist_data() menjadi load_watchlist_from_db()
+    watchlist = load_watchlist_from_db() 
+    
     if not watchlist: return
     
     print(f"[{datetime.now().strftime('%H:%M')}] 🧠 AI Bot: Running Heavy Logic on Watchlist...")
@@ -224,18 +233,24 @@ SECTORS = {
 }
 
 # --- HELPER FUNCTIONS ---
-def load_watchlist_data():
-    if not os.path.exists(WATCHLIST_FILE): return []
-    try:
-        with open(WATCHLIST_FILE, 'r') as f: 
-            data = json.load(f)
-            if data and isinstance(data[0], str):
-                return [{"symbol": s, "mode": "AUTO"} for s in data]
-            return data
-    except: return []
+def get_db_connection():
+    # Optimasi: Tambahkan pengecekan agar tidak error localhost lagi
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        print("❌ ERROR: DATABASE_URL tidak terbaca dari .env!")
+        return None
+    return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
-def save_watchlist_data(data):
-    with open(WATCHLIST_FILE, 'w') as f: json.dump(data, f)
+def load_watchlist_from_db():
+    conn = get_db_connection() # Pastikan ini memanggil fungsi get_db_connection()
+    if not conn: 
+        return []
+    cur = conn.cursor()
+    cur.execute("SELECT symbol, mode, strategy, timeframe, period FROM watchlist")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
 
 def calculate_rr_string(entry, tp, sl):
     try:
@@ -263,66 +278,90 @@ def read_root():
 
 @app.get("/api/watchlist")
 def get_watchlist():
-    items = load_watchlist_data()
+    # 1. Hubungkan ke Database
+    conn = get_db_connection()
+    if not conn: 
+        raise HTTPException(status_code=500, detail="Gagal terhubung ke database")
+    
+    cur = conn.cursor()
+    # 2. Ambil data dari tabel watchlist
+    cur.execute("SELECT symbol, mode, strategy, timeframe, period FROM watchlist ORDER BY created_at DESC")
+    items = cur.fetchall()
+    cur.close()
+    conn.close()
+    
     results = []
     engine = TradingEngine(initial_capital=1000)
     
+    # 3. Lakukan kalkulasi strategi untuk setiap koin
     for item in items:
         try:
-            # Panggil fungsi Centralized Logic
             config = find_best_strategy_for_symbol(
-                engine, item['symbol'], mode=item.get('mode', 'AUTO'),
-                manual_strat=item.get('strategy'), manual_tf=item.get('timeframe'), manual_per=item.get('period')
+                engine, 
+                item['symbol'], 
+                mode=item['mode'], 
+                manual_strat=item.get('strategy'), 
+                manual_tf=item.get('timeframe'), 
+                manual_per=item.get('period')
             )
             
             if config:
                 growth_pct = (config['profit'] / 1000) * 100
-                best_data = {
+                results.append({
                     "symbol": item['symbol'],
-                    "mode": item.get('mode', 'AUTO'),
+                    "mode": item['mode'],
                     "strategy": config['strategy'],
                     "timeframe": config['timeframe'],
                     "period": config['period'],
                     "growth_usd": config['profit'],
                     "growth_pct": round(growth_pct, 2),
                     "win_rate": config['win_rate']
-                }
-                results.append(best_data)
-            else:
-                results.append({"symbol": item['symbol'], "mode": item.get('mode', 'AUTO'), "strategy": "No Data", "growth_usd": 0})
+                })
         except Exception as e:
-            print(f"Error watchlist detail {item['symbol']}: {e}")
-            results.append({"symbol": item['symbol'], "mode": "ERROR", "strategy": "Error", "growth_usd": 0})
-
+            print(f"Error pada {item['symbol']}: {e}")
+            
     return results
 
 @app.post("/api/watchlist")
 def add_watchlist(item: WatchlistItem):
-    current = load_watchlist_data()
-    if len(current) >= 10: raise HTTPException(status_code=400, detail="Limit Watchlist (Max 10).")
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database error")
     
-    for c in current:
-        if c['symbol'] == item.symbol:
-             raise HTTPException(status_code=400, detail="Symbol already in watchlist.")
-
-    new_entry = {
-        "symbol": item.symbol,
-        "mode": item.mode,
-        "strategy": item.strategy if item.mode == "MANUAL" else None,
-        "timeframe": item.timeframe if item.mode == "MANUAL" else None,
-        "period": item.period if item.mode == "MANUAL" else None
-    }
-    
-    current.append(new_entry)
-    save_watchlist_data(current)
-    return current
+    cur = conn.cursor()
+    try:
+        # Perintah SQL untuk memasukkan data
+        cur.execute(
+            """
+            INSERT INTO watchlist (symbol, mode, strategy, timeframe, period) 
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (item.symbol.upper(), item.mode, item.strategy, item.timeframe, item.period)
+        )
+        conn.commit()
+    except psycopg2.IntegrityError:
+        # Jika koin sudah ada (karena kita pakai constraint UNIQUE pada kolom symbol)
+        conn.rollback()
+        raise HTTPException(status_code=400, detail="Simbol sudah ada di watchlist")
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
+        
+    return {"status": "success", "message": f"{item.symbol} berhasil ditambahkan"}
 
 @app.delete("/api/watchlist/{symbol}")
 def delete_watchlist(symbol: str):
-    current = load_watchlist_data()
-    new_list = [c for c in current if c['symbol'] != symbol]
-    save_watchlist_data(new_list)
-    return new_list
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Perintah SQL untuk menghapus berdasarkan simbol
+    cur.execute("DELETE FROM watchlist WHERE symbol = %s", (symbol.upper(),))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"status": "deleted"}
 
 @app.post("/api/run-backtest")
 def run_backtest(req: StrategyRequest):

@@ -22,3 +22,17 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rahasia
+.env
+backend/.env
+
+# Python
+__pycache__/
+*.pyc
+backend/__pycache__/
+
+# Data Lokal (Opsional, karena sudah pakai Supabase)
+backend/watchlist.json
+backend/trades_log.csv
+backend/summary_metrics.json
