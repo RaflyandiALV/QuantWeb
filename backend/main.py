@@ -2,10 +2,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-try:
-    from backend.strategy_core import TradingEngine
-except ImportError:
-    from strategy_core import TradingEngine
+from strategy_core import TradingEngine
 import pandas as pd
 import json
 import os
