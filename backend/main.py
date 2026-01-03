@@ -181,7 +181,7 @@ async def lifespan(app: FastAPI):
     
     scheduler = BackgroundScheduler()
     # Interval check setiap 60 menit
-    scheduler.add_job(check_market_signals, 'interval', minutes=60)
+    scheduler.add_job(check_market_signals, 'interval', minutes=10)
     scheduler.start()
     
     yield
