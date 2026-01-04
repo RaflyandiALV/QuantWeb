@@ -466,4 +466,4 @@ def trigger_alert(item: dict):
 
 @app.get("/health")
 def health_check():
-    return {"status": "staying_alive"}
+    return {"status": "staying_alive", "timestamp": datetime.now().isoformat()}
