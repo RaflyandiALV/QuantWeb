@@ -13,7 +13,7 @@ const Watchlist = ({ onSelectAsset }) => {
     const [timeframe, setTimeframe] = useState("1d");
     const [period, setPeriod] = useState("1y");
 
-    const API_URL = 'http://127.0.0.1:8000/api/watchlist';
+    const API_URL = `${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api/watchlist`;
 
     useEffect(() => {
         fetchWatchlist();

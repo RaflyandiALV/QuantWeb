@@ -3,6 +3,8 @@ import { createChart, ColorType } from 'lightweight-charts';
 import { Play, TrendingUp, Activity, Zap, Info, Search, Globe, Coins, Shield, MousePointerClick, AlertTriangle, Settings, Clock, CheckCircle } from 'lucide-react';
 import Watchlist from '../../components/Watchlist'; 
 
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 const SECTORS_LIST = [
     { id: "BIG_CAP", name: "Big Cap & L1" },
     { id: "AI_COINS", name: "AI Narratives" },
@@ -104,8 +106,10 @@ const DashboardPage = () => {
             const payload = { ...formData };
             if (formData.period === 'custom') { payload.start_date = formData.startDate; payload.end_date = formData.endDate; }
 
-            const res = await fetch('http://127.0.0.1:8000/api/run-backtest', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            const res = await fetch(`${BASE_URL}/api/run-backtest`, {
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify(payload)
             });
             
             if (!res.ok) {
@@ -158,8 +162,10 @@ const DashboardPage = () => {
         try {
             const payload = { ...formData };
             if (formData.period === 'custom') { payload.start_date = formData.startDate; payload.end_date = formData.endDate; }
-            const res = await fetch('http://127.0.0.1:8000/api/compare-strategies', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            const res = await fetch(`${BASE_URL}/api/compare-strategies`, {
+               method: 'POST', 
+               headers: { 'Content-Type': 'application/json' }, 
+               body: JSON.stringify(payload)
             });
             if(res.ok) { const data = await res.json(); setComparisonData(data.comparison); }
         } catch (err) { console.error(err); }
@@ -175,8 +181,10 @@ const DashboardPage = () => {
         for (const sector of SECTORS_LIST) {
             try {
                 const payload = { sector: sector.id, timeframe: "1d", period: "1y", capital: formData.capital };
-                const res = await fetch('http://127.0.0.1:8000/api/scan-market', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                const res = await fetch(`${BASE_URL}/api/scan-market`, {
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     const data = await res.json();
