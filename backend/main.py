@@ -463,3 +463,7 @@ def trigger_alert(item: dict):
     msg = (f"🚨 **MANUAL TEST ALERT**\n_QuantBot Test_")
     send_telegram_alert(msg)
     return {"status": "ok"}
+
+@app.get("/health")
+def health_check():
+    return {"status": "staying_alive"}
