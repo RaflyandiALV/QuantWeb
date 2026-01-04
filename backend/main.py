@@ -195,7 +195,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://quantweb-frontend-n3ohbzvb1-rafliyandiandis-projects.vercel.app"], # URL Vercel Anda
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
