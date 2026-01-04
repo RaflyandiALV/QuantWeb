@@ -195,7 +195,12 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://quantweb-frontend-n3ohbzvb1-rafliyandiandis-projects.vercel.app"], # URL Vercel Anda
+    allow_origins=[
+    "https://quantweb-frontend.vercel.app",           # Domain Production (Utama)
+    "http://localhost:5173",                          # Localhost Vite (Default)
+    "http://127.0.0.1:5173",                        # Localhost IP
+    "https://quantweb-frontend-rafliyandiandis-projects.vercel.app" # Domain General Vercel
+    ], # URL Vercel Anda
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
