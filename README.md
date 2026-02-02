@@ -16,15 +16,27 @@
 
 ## 📸 Project Showcase
 
-*(Please upload your 5 Landscape Screenshots here)*
+Here is a visual tour of the platform's core capabilities.
 
-| Dashboard Overview | Strategy Backtester |
+### 1. Main Dashboard
+**Real-time market overview and active strategy monitoring.**
+![Main Dashboard](./docs/page1.png)
+
+---
+
+### Core Modules
+
+| **2. Strategy Backtester** | **3. Market Scanner** |
 | :---: | :---: |
-| ![Dashboard](https://placehold.co/600x400/png?text=1+Dashboard+Overview) | ![Backtest](https://placehold.co/600x400/png?text=2+Backtest+Engine) |
+| *Testing Momentum/Grid strategies on historical data.* | *Scanning sectors (AI, Meme, Big Cap) for high win-rate coins.* |
+| ![Backtest](./docs/page2.png) | ![Scanner](./docs/page3.png) |
 
-| Market Scanner | Smart Watchlist | Telegram Integration |
-| :---: | :---: | :---: |
-| ![Scanner](https://placehold.co/600x400/png?text=3+Market+Scanner) | ![Watchlist](https://placehold.co/600x400/png?text=4+Watchlist) | ![Telegram](https://placehold.co/600x400/png?text=5+Telegram+Bot) |
+| **4. Smart Watchlist** | **5. Telegram Integration** |
+| :---: | :---: |
+| *Database-integrated watchlist for quick access.* | *Real-time BUY/SELL alerts sent directly to your phone.* |
+| ![Watchlist](./docs/page4.png) | ![Telegram Bot](./docs/tele-bot.png) |
+
+*(Note: Images above are actual screenshots from the live application.)*
 
 ---
 
@@ -70,11 +82,12 @@
 ### B. Backend Setup
 1.  Navigate to the backend folder and install libraries:
     ```bash
+    cd backend
     pip install -r requirements.txt
     ```
 2.  Run the Server:
     ```bash
-    python -m uvicorn backend.main:app --reload
+    python -m uvicorn main:app --reload
     ```
 
 ### C. Frontend Setup
