@@ -117,8 +117,8 @@ Here is a visual tour of the platform's core capabilities.
 ---
 
 ## 🔗 Live Demo
-* **Live Website:** [Click Here to View App](#) *(Update with your link)*
-* **API Documentation:** [Click Here to View Swagger](#) *(Update with your link)*
+* **Live Website:** [Click Here to View](#) *(Not Available)*
+* **API Documentation:** [Click Here to View](#) *(Not Available)*
 
 ## 👤 Author
 **Raflyandi Alviansyah**
