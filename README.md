@@ -1,107 +1,111 @@
-# QuantWeb - Algorithmic Trading Ecosystem 🚀
+# QuantWeb - Algorithmic Trading & Backtesting Platform 🚀
 
-![Project Status](https://img.shields.io/badge/Status-MVP_Ready-success?style=for-the-badge)
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.95%2B-009688?style=for-the-badge&logo=fastapi)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
-![Tailwind](https://img.shields.io/badge/Tailwind-CSS-38B2AC?style=for-the-badge&logo=tailwind-css)
+![React](https://img.shields.io/badge/Frontend-React_Vite-61DAFB?style=for-the-badge&logo=react)
+![Python](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi)
+![PostgreSQL](https://img.shields.io/badge/Database-Supabase-3ECF8E?style=for-the-badge&logo=supabase)
+![Telegram](https://img.shields.io/badge/Bot-Telegram_API-26A5E4?style=for-the-badge&logo=telegram)
+![Status](https://img.shields.io/badge/Status-Live_Production-success?style=for-the-badge)
 
-**QuantWeb** is a high-performance, full-stack algorithmic trading platform designed to bridge the gap between quantitative research and live market execution. It serves as a centralized command center where users can visualize real-time market data, execute automated trading strategies (Grid, Mean Reversion), and monitor portfolio performance through a responsive modern interface.
+**QuantWeb** is a comprehensive quantitative trading analysis platform that allows users to backtest strategies, automate market scanning, and receive real-time trading signals via Telegram.
 
-This system is engineered to handle real-time data ingestion and acts as the **core backend API** for the companion [iOS Mobile App](https://github.com/raflyandialv/QuantIOS-MMS).
+**The Problem Solved:**
+* Validating trading strategies using data-driven backtesting instead of intuition.
+* Automating 24/7 market monitoring without the need to constantly watch charts.
+
+---
+
+## 📸 Project Showcase
+
+*(Please upload your 5 Landscape Screenshots here)*
+
+| Dashboard Overview | Strategy Backtester |
+| :---: | :---: |
+| ![Dashboard](https://placehold.co/600x400/png?text=1+Dashboard+Overview) | ![Backtest](https://placehold.co/600x400/png?text=2+Backtest+Engine) |
+
+| Market Scanner | Smart Watchlist | Telegram Integration |
+| :---: | :---: | :---: |
+| ![Scanner](https://placehold.co/600x400/png?text=3+Market+Scanner) | ![Watchlist](https://placehold.co/600x400/png?text=4+Watchlist) | ![Telegram](https://placehold.co/600x400/png?text=5+Telegram+Bot) |
 
 ---
 
 ## 🌟 Key Features
 
-### 🖥️ Interactive Web Dashboard
-* **Real-Time Visualization:** Live candlestick charts and technical indicators (RSI, MACD, Bollinger Bands) powered by `Recharts`.
-* **Strategy Control:** Start, stop, and configure trading bots dynamically without touching code.
-* **Portfolio Analytics:** Track PnL (Profit and Loss), Equity Curve, and active positions in real-time.
-
-### ⚙️ Powerful Quantitative Engine (Backend)
-* **Multi-Strategy Support:** Native implementation of **Grid Trading**, **Mean Reversion**, and **Momentum** algorithms.
-* **Backtesting Module:** Simulate strategies against historical data to calculate Sharpe Ratio and Max Drawdown before going live.
-* **FastAPI Architecture:** Asynchronous, non-blocking API designed for low-latency financial data processing.
+* **Real-time Market Scanner:** Automatically scans the market for coins with the highest Win Rate across various sectors (AI, Meme, Big Cap).
+* **Backtesting Engine:** Rigorously tests strategies (Momentum, Mean Reversal, Grid) against historical data.
+* **Smart Watchlist:** Integrated watchlist synchronized with the database.
+* **Telegram AI Bot:** Automatically sends alert notifications to your phone when the server detects a BUY/SELL signal.
 
 ---
 
-## 🛠️ Technology Stack
+## 🛠️ Tech Stack & Architecture
 
-| Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Frontend** | **React.js (Vite)** | Blazing fast build tool, component-based UI. |
-| **Styling** | **Tailwind CSS** | Utility-first CSS for responsive, modern design. |
-| **Backend** | **Python & FastAPI** | High-performance async framework for the API layer. |
-| **Data Engine** | **Pandas & NumPy** | For vectorised financial calculations and data manipulation. |
-| **Market Data** | **CCXT / YFinance** | Unified API for crypto exchanges and stock market data. |
+**Data Flow:** `Market Data` -> `Python Backend` -> `Supabase/PostgreSQL` -> `Frontend React` / `Telegram Bot`
+
+| Layer | Technology |
+| :--- | :--- |
+| **Frontend** | React.js (Vite), Tailwind CSS, Lucide Icons |
+| **Backend** | Python, FastAPI, Uvicorn |
+| **Database** | Supabase (PostgreSQL) |
+| **Trading Libs** | Pandas, Custom Strategy Logic |
+| **Notification** | Telegram Bot API |
+| **Deployment** | Koyeb (Backend), Vercel (Frontend) |
 
 ---
 
-## 🚀 Quick Start Guide (How to Run)
+## 💻 How to Run
 
-Follow these instructions to set up the project locally on your machine.
-
-### Prerequisites
-* **Python 3.9** or higher
-* **Node.js** & **npm** (for frontend)
-
-### Step 1: Setup Backend (Python API)
-
-1.  Navigate to the backend directory:
+### A. Local Environment Setup
+1.  **Clone Repository:**
     ```bash
-    cd backend
+    git clone [https://github.com/RaflyandiALV/QuantWeb.git](https://github.com/RaflyandiALV/QuantWeb.git)
+    ```
+2.  **Environment Variables:**
+    Create a `.env` file in the root directory:
+    ```env
+    DATABASE_URL=your_postgres_url
+    TELEGRAM_TOKEN=your_bot_token
+    TELEGRAM_CHAT_ID=your_chat_id
     ```
 
-2.  Create and activate Virtual Environment (Recommended):
-    ```bash
-    # Windows
-    python -m venv venv
-    venv\Scripts\activate
-
-    # Mac/Linux
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-
-3.  Install Dependencies:
+### B. Backend Setup
+1.  Navigate to the backend folder and install libraries:
     ```bash
     pip install -r requirements.txt
     ```
-
-4.  Run the Server:
+2.  Run the Server:
     ```bash
-    uvicorn main:app --reload
+    python -m uvicorn backend.main:app --reload
     ```
-    ✅ *Success! The API is now running at `http://127.0.0.1:8000`*
 
-### Step 2: Setup Frontend (React Dashboard)
-
-1.  Open a **new** terminal window (keep the backend terminal running).
-
-2.  Navigate to frontend directory:
+### C. Frontend Setup
+1.  Navigate to the frontend folder and install packages:
     ```bash
     cd frontend
-    ```
-
-3.  Install Node Modules:
-    ```bash
     npm install
     ```
-
-4.  Start the Development Server:
+2.  Run in Development Mode:
     ```bash
     npm run dev
     ```
-    ✅ *Success! The Dashboard is now accessible at `http://localhost:5173`*
+    *Access the app at `http://localhost:5173/`*
 
 ---
 
-## 📸 Screenshots
+## ⚠️ Engineering Challenges & Solutions
 
-*(Place your screenshots here)*
+**1. Deployment on Linux (Koyeb)**
+* **Challenge:** Encountered `ModuleNotFoundError` during cloud deployment.
+* **Solution:** Implemented Python Package standards with `__init__.py` and configured `PYTHONPATH` in the runtime environment to ensure proper module resolution.
+
+**2. Database Synchronization**
+* **Challenge:** Connecting a relational database with a dynamic real-time dashboard.
+* **Solution:** Configured CORS middleware to allow secure communication between the Vercel-hosted Frontend and Koyeb-hosted Backend.
+
+---
+
+## 🔗 Live Demo
+* **Live Website:** [Click Here to View App](#) *(Update with your link)*
+* **API Documentation:** [Click Here to View Swagger](#) *(Update with your link)*
 
 ## 👤 Author
-
 **Raflyandi Alviansyah**
-* **GitHub:** [@RaflyandiALV](https://github.com/RaflyandiALV)
