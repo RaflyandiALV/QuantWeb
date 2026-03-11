@@ -36,3 +36,9 @@ backend/__pycache__/
 backend/watchlist.json
 backend/trades_log.csv
 backend/summary_metrics.json
+
+# Environment and Data Files
+.venv/
+*.db
+*.db-shm
+*.db-wal

@@ -1,7 +1,9 @@
 fastapi
 uvicorn
 pandas
-yfinance
+ccxt
+pandas
+numpy
 pandas_ta
 requests
 python-dotenv

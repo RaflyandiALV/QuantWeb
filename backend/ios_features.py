@@ -7,11 +7,10 @@ import json
 from typing import List, Optional
 from datetime import datetime
 
-# --- PENTING: DEFINISI ROUTER ---
-# Ini adalah variabel yang dicari oleh main.py
+
 router = APIRouter()
 
-# --- KONFIGURASI LOKAL ---
+
 TRADES_LOG_FILE = "trades_log.csv"
 WATCHLIST_FILE = "watchlist.json"
 
@@ -38,12 +37,12 @@ def find_best_strategy(engine, symbol):
     best_res = None
     best_score = -99999
     
-    # Ambil data sekali
+    
     df = engine.fetch_data(symbol, requested_period="max", interval="1d")
     if df is None or len(df) < 50: return None
     
     for strat in strategies:
-        # Gunakan try-except agar tidak crash jika data kurang
+        
         try:
             _, _, metrics, _ = engine.run_backtest(df, strat, requested_period="1y")
             if metrics['total_trades'] < 2: continue
