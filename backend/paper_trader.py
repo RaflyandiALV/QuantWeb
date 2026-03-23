@@ -22,6 +22,7 @@ from alpha_data import AlphaDataProvider
 from alpha_features import AlphaFeatureEngine
 from ai_brain import AIBrain
 from execution_engine import FuturesExecutionManager
+from strategy_core import TradingEngine
 
 # =============================================================================
 # CONFIGURATION
@@ -51,6 +52,10 @@ class PaperTrader:
         self.feature_engine = AlphaFeatureEngine(self.data_provider)
         self.ai_brain = AIBrain()
         self.executor = FuturesExecutionManager(paper_mode=True, leverage=leverage)
+        self.strategy_engine = TradingEngine() # Used for auto-detecting best strategy
+        
+        # Strategy assignment per symbol
+        self.symbol_strategies = {}
 
         # Runtime state
         self._running = False
@@ -236,11 +241,21 @@ class PaperTrader:
             print(f"   ❌ {symbol}: Cannot get price, skipping")
             return
 
+        # Step 3.5: Strategy Auto-Detection (if not yet assigned)
+        if symbol not in self.symbol_strategies:
+            print(f"   🔍 {symbol}: Auto-detecting best strategy...")
+            best_strat = self._detect_best_strategy(symbol)
+            self.symbol_strategies[symbol] = best_strat
+            print(f"   🎯 {symbol}: Best strategy detected -> {best_strat}")
+            
+        assigned_strategy = self.symbol_strategies[symbol]
+
         # Step 4: DECIDE — AI makes a decision
         market_snapshot = {
             **features_result,
             "price": price,
-            "regime": features_result.get("signals", {}).get("overall_bias", "NEUTRAL")
+            "regime": features_result.get("signals", {}).get("overall_bias", "NEUTRAL"),
+            "assigned_strategy": assigned_strategy  # Pass to AI Brain for context
         }
         decision = self.ai_brain.make_decision(symbol, market_snapshot)
 
@@ -288,6 +303,41 @@ class PaperTrader:
 
                 # Log closed position
                 self._log_position_close(symbol, result)
+
+    def _detect_best_strategy(self, symbol: str) -> str:
+        """Run a quick 1y backtest on 1h timeframe to find the best strategy for the symbol."""
+        strategies_to_test = [
+            "MOMENTUM", "MEAN_REVERSAL", "GRID", "MULTITIMEFRAME",
+            "MOMENTUM_PRO", "MEAN_REVERSAL_PRO", "GRID_PRO", "MULTITIMEFRAME_PRO",
+            "MIX_STRATEGY", "MIX_STRATEGY_PRO"
+        ]
+        
+        try:
+            df_raw = self.strategy_engine.fetch_data(symbol, requested_period="1y", interval="1h")
+            if df_raw is None or len(df_raw) < 50:
+                print(f"   ⚠️ Could not fetch enough data for {symbol} backtest, defaulting to MULTITIMEFRAME_PRO")
+                return "MULTITIMEFRAME_PRO"
+                
+            best_strat = "MULTITIMEFRAME_PRO"
+            best_profit = -float('inf')
+            
+            for strat in strategies_to_test:
+                # Try cache first to speed up
+                cached = self.strategy_engine._get_cached_result(symbol, "1h", "1y", strat)
+                if cached:
+                    profit = cached.get('net_profit', 0)
+                else:
+                    _, _, metrics, _ = self.strategy_engine.run_backtest(df_raw, strat, requested_period="1y")
+                    profit = metrics.get('net_profit', 0)
+                    
+                if profit > best_profit:
+                    best_profit = profit
+                    best_strat = strat
+                    
+            return best_strat
+        except Exception as e:
+            print(f"   ⚠️ Strategy detection error for {symbol}: {e}")
+            return "MULTITIMEFRAME_PRO"
 
     # =========================================================================
     # LOGGING

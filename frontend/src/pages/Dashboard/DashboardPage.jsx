@@ -20,6 +20,7 @@ import Sidebar from '../../components/Sidebar';
 import AnomalyDashboard from '../../components/AnomalyDashboard';
 import GlobalMarketDashboard from '../../components/GlobalMarketDashboard';
 import AIDashboard from '../../components/AIDashboard';
+import PaperTradingDashboard from '../../components/PaperTradingDashboard';
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -798,6 +799,9 @@ const DashboardPage = () => {
                             )}
                         </div>
                     )}
+
+                    {/* === PAPER TRADING === */}
+                    {viewMode === 'PAPER_TRADING' && <div className="animate-fade-in-up"><PaperTradingDashboard /></div>}
 
                     {/* === BOT TRACKER === */}
                     {viewMode === 'BOT_TRACKER' && <div className="animate-fade-in-up"><BotTracker /></div>}

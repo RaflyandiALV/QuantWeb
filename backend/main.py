@@ -1523,10 +1523,12 @@ validation_engine_instance = ValidationEngine()
 # --- Alpha Data Endpoints ---
 
 @app.get("/api/alpha-data/{symbol}")
-def get_alpha_data(symbol: str):
-    """Get microstructure data for a symbol (aggTrades, funding, OI, L/S, taker vol)."""
+def get_alpha_data(symbol: str, period: str = "5m"):
+    """Get microstructure data for a symbol (aggTrades, funding, OI, L/S, taker vol).
+    Period options: 5m, 15m, 30m, 1h, 2h, 4h, 6h, 12h, 1d
+    """
     try:
-        data = alpha_data_provider.get_full_snapshot(symbol)
+        data = alpha_data_provider.get_full_snapshot(symbol, period=period)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1594,6 +1596,49 @@ def get_ai_decisions(symbol: Optional[str] = None, limit: int = 50):
 
 # --- Paper Trader Endpoints ---
 
+class PaperTraderConfig(BaseModel):
+    watchlist: Optional[List[str]] = None
+    interval: Optional[int] = None
+    trade_amount: Optional[float] = None
+    leverage: Optional[int] = None
+    use_testnet: Optional[bool] = None
+
+@app.post("/api/paper-trader/configure")
+def configure_paper_trader(config: PaperTraderConfig):
+    """Update paper trader configuration."""
+    try:
+        # Update attributes directly for now, later we'll add proper setters
+        updated = {}
+        if config.watchlist is not None:
+            paper_trader_instance.watchlist = config.watchlist
+            updated["watchlist"] = config.watchlist
+        if config.interval is not None:
+            paper_trader_instance.interval = config.interval
+            updated["interval"] = config.interval
+        if config.trade_amount is not None:
+            paper_trader_instance.trade_amount = config.trade_amount
+            updated["trade_amount"] = config.trade_amount
+        if config.leverage is not None:
+            paper_trader_instance.leverage = config.leverage
+            # Need to update execution manager leverage as well
+            if hasattr(paper_trader_instance, 'execution_manager'):
+                paper_trader_instance.execution_manager.leverage = config.leverage
+            updated["leverage"] = config.leverage
+        if config.use_testnet is not None:
+            # Recreate execution manager if mode changes
+            paper_trader_instance.paper_mode = not config.use_testnet
+            paper_trader_instance.use_testnet = config.use_testnet
+            from execution_engine import FuturesExecutionManager
+            paper_trader_instance.executor = FuturesExecutionManager(
+                paper_mode=not config.use_testnet, 
+                use_testnet=config.use_testnet
+            )
+            updated["use_testnet"] = config.use_testnet
+            
+        return {"status": "success", "updated": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/paper-trader/status")
 def get_paper_trader_status():
     """Get paper trader status."""
@@ -1621,6 +1666,35 @@ def run_paper_cycle():
         return paper_trader_instance.run_single_cycle()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/paper-trader/klines")
+def get_paper_klines(symbol: str, timeframe: str = '1h', limit: int = 100):
+    """Fetch historical klines for chart visualization."""
+    try:
+        import ccxt
+        exchange = ccxt.binance({'options': {'defaultType': 'future'}})
+        # Format symbol for ccxt ('BTC-USDT' -> 'BTC/USDT:USDT')
+        formatted_symbol = symbol.replace("-", "/")
+        if ":USDT" not in formatted_symbol and "USDT" in formatted_symbol:
+            formatted_symbol += ":USDT"
+            
+        ohlcv = exchange.fetch_ohlcv(formatted_symbol, timeframe, limit=limit)
+        
+        # Format for lightweight-charts: {time, open, high, low, close}
+        formatted_data = []
+        for candle in ohlcv:
+            formatted_data.append({
+                'time': int(candle[0] / 1000), # Unix timestamp in seconds
+                'open': candle[1],
+                'high': candle[2],
+                'low': candle[3],
+                'close': candle[4]
+            })
+            
+        return {"status": "success", "data": formatted_data}
+    except Exception as e:
+        print(f"Error fetching klines: {e}")
+        return {"status": "error", "message": str(e), "data": []}
 
 # --- Validation Endpoints ---
 

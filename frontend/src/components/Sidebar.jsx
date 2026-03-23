@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
     Play, TrendingUp, Activity, Search, Globe, Shield, PieChart, Trophy, Gem,
     BarChart2, Layers, ChevronDown, Menu, X, Radar,
-    ArrowLeftRight, LineChart, Eye, Brain
+    ArrowLeftRight, LineChart, Eye, Brain, Zap
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -29,6 +29,7 @@ const NAV_GROUPS = [
     {
         label: 'Operations',
         items: [
+            { id: 'PAPER_TRADING', label: 'Paper Trading', icon: Zap, color: '#f97316' },
             { id: 'BOT_TRACKER', label: 'Bot Tracker', icon: Activity, color: '#22c55e' },
             { id: 'PORTFOLIO', label: 'Portfolio', icon: PieChart, color: '#10b981' },
             { id: 'RISK', label: 'Risk Dashboard', icon: Shield, color: '#ef4444' },
