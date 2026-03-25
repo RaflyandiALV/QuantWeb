@@ -7,7 +7,7 @@ import {
     LineChart, Line, ResponsiveContainer, YAxis
 } from 'recharts';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 const GemRow = ({ gem, rank, onSelect }) => {
     // Format equity curve for Recharts { value: x }
@@ -105,7 +105,7 @@ const EliteSignals = ({ onGemSelect }) => {
             if (useShort) modes.push("SHORT");
 
             const modeStr = modes.join(",");
-            const res = await fetch(`${API_URL}/api/scanner/elite?modes=${modeStr}`);
+            const res = await fetch(`${API_BASE}/api/scanner/elite?modes=${modeStr}`);
 
             if (res.ok) {
                 const data = await res.json();
@@ -158,7 +158,7 @@ const EliteSignals = ({ onGemSelect }) => {
                             }`}
                     >
                         {loading ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
-                        {loading ? 'Scanning...' : 'Find Gems 💎'}
+                        {loading ? 'Scanning...' : 'Find Gems '}
                     </button>
                 </div>
             </div>

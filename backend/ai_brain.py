@@ -1,7 +1,8 @@
 # backend/ai_brain.py
 """
 AI DECISION BRAIN (Gap 3) — Hybrid Mode
-Claude 3 Haiku as primary, rule-based mock as fallback.
+Gemini 2.5 Flash as primary, rule-based mock as fallback.
+Supports rolling API keys for rate-limit avoidance.
 
 Receives MarketSnapshot (OHLCV + microstructure features + regime):
 → Returns structured JSON: {decision, confidence, reasoning, entry, sl, tp, rr}
@@ -14,26 +15,27 @@ import os
 import json
 import time
 import sqlite3
+import itertools
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Try importing anthropic
+# Try importing Google Generative AI
 try:
-    import anthropic
-    HAS_ANTHROPIC = True
+    import google.generativeai as genai
+    HAS_GENAI = True
 except ImportError:
-    HAS_ANTHROPIC = False
-    print("⚠️ [AI BRAIN] anthropic package not installed. Running in MOCK mode.")
-    print("   Install with: pip install anthropic")
+    HAS_GENAI = False
+    print("⚠️ [AI BRAIN] google-generativeai package not installed. Running in MOCK mode.")
+    print("   Install with: pip install google-generativeai")
 
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-AI_MODEL = "claude-3-haiku-20240307"
+AI_MODEL = "gemini-2.5-flash"
 AI_MAX_TOKENS = 1024
 AI_TEMPERATURE = 0.3  # Low temp for consistent decisions
 MIN_CONFIDENCE = 70  # Minimum confidence threshold (%)
@@ -72,26 +74,53 @@ ONLY output valid JSON. No markdown, no explanation outside JSON."""
 class AIBrain:
     """
     Hybrid AI Decision Engine.
-    Primary: Claude 3 Haiku via Anthropic API.
+    Primary: Gemini 2.5 Flash via Google Generative AI API with rolling keys.
     Fallback: Rule-based mock engine using same feature inputs.
     """
 
     def __init__(self):
-        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        self._api_keys = self._load_api_keys()
+        self._key_cycle = itertools.cycle(self._api_keys) if self._api_keys else None
+        self._current_key = next(self._key_cycle) if self._key_cycle else None
         self._client = None
         self._init_mode()
         self._init_db()
         self._decision_count = 0
         self._last_call_time = 0
 
+    def _load_api_keys(self) -> list:
+        """Load comma-separated API keys from GEMINI_API_KEYS env var."""
+        keys_str = os.getenv("GEMINI_API_KEYS", "")
+        if keys_str:
+            keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+            if keys:
+                print(f"[AI BRAIN] Loaded {len(keys)} Gemini API keys for rolling rotation")
+                return keys
+        # Fallback to single key
+        single = os.getenv("GEMINI_API_KEY", "")
+        if single:
+            return [single]
+        return []
+
+    def _rotate_key(self):
+        """Rotate to next API key in the pool."""
+        if self._key_cycle:
+            self._current_key = next(self._key_cycle)
+            return self._current_key
+        return None
+
     def _init_mode(self):
-        """Detect mode: live (Claude API) or mock (rule-based)."""
-        if HAS_ANTHROPIC and self.api_key and self.api_key.startswith("sk-ant-"):
+        """Detect mode: live (Gemini API) or mock (rule-based)."""
+        if HAS_GENAI and self._current_key:
             try:
-                self._client = anthropic.Anthropic(api_key=self.api_key)
+                genai.configure(api_key=self._current_key)
+                self._client = genai.GenerativeModel(
+                    model_name=AI_MODEL,
+                    system_instruction=SYSTEM_PROMPT
+                )
                 self.mode = "live"
                 self.model = AI_MODEL
-                print(f"[AI BRAIN] ✅ Live mode (Claude 3 Haiku)")
+                print(f"[AI BRAIN] ✅ Live mode ({AI_MODEL}) — {len(self._api_keys)} key(s)")
             except Exception as e:
                 print(f"[AI BRAIN] ⚠️ Client init failed: {e}. Falling back to mock.")
                 self.mode = "mock"
@@ -99,12 +128,12 @@ class AIBrain:
         else:
             self.mode = "mock"
             self.model = "mock-rule-engine"
-            if not HAS_ANTHROPIC:
-                print("[AI BRAIN] 🎭 Mock mode (anthropic not installed)")
-            elif not self.api_key:
-                print("[AI BRAIN] 🎭 Mock mode (no ANTHROPIC_API_KEY)")
+            if not HAS_GENAI:
+                print("[AI BRAIN] 🎭 Mock mode (google-generativeai not installed)")
+            elif not self._current_key:
+                print("[AI BRAIN] 🎭 Mock mode (no GEMINI_API_KEYS)")
             else:
-                print("[AI BRAIN] 🎭 Mock mode (invalid key format)")
+                print("[AI BRAIN] 🎭 Mock mode (init failed)")
 
     def _init_db(self):
         """Create decision log table."""
@@ -143,8 +172,9 @@ class AIBrain:
         return {
             "mode": self.mode,
             "model": self.model,
-            "key_present": bool(self.api_key),
-            "anthropic_installed": HAS_ANTHROPIC,
+            "key_count": len(self._api_keys),
+            "key_present": bool(self._current_key),
+            "genai_installed": HAS_GENAI,
             "decisions_made": self._decision_count,
             "min_confidence": MIN_CONFIDENCE,
             "timestamp": datetime.now().isoformat()
@@ -172,7 +202,7 @@ class AIBrain:
         self._decision_count += 1
 
         if self.mode == "live":
-            decision = self._call_claude(symbol, market_snapshot)
+            decision = self._call_gemini(symbol, market_snapshot)
         else:
             decision = self._mock_decision(symbol, market_snapshot)
 
@@ -192,46 +222,64 @@ class AIBrain:
         return decision
 
     # =========================================================================
-    # CLAUDE API (LIVE MODE)
+    # GEMINI API (LIVE MODE)
     # =========================================================================
 
-    def _call_claude(self, symbol: str, snapshot: dict) -> dict:
-        """Call Claude 3 Haiku for trading decision."""
-        try:
-            # Rate limit: min 1 second between calls
-            elapsed = time.time() - self._last_call_time
-            if elapsed < 1.0:
-                time.sleep(1.0 - elapsed)
+    def _call_gemini(self, symbol: str, snapshot: dict) -> dict:
+        """Call Gemini 2.5 Flash for trading decision with rolling key rotation."""
+        max_retries = min(len(self._api_keys), 3)  # Try up to 3 different keys
+        last_error = None
 
-            # Build prompt with key metrics only (keep tokens low)
-            user_prompt = self._build_prompt(symbol, snapshot)
+        for attempt in range(max_retries):
+            try:
+                # Rate limit: min 1 second between calls
+                elapsed = time.time() - self._last_call_time
+                if elapsed < 1.0:
+                    time.sleep(1.0 - elapsed)
 
-            response = self._client.messages.create(
-                model=AI_MODEL,
-                max_tokens=AI_MAX_TOKENS,
-                temperature=AI_TEMPERATURE,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}]
-            )
+                # Configure with current key
+                genai.configure(api_key=self._current_key)
+                model = genai.GenerativeModel(
+                    model_name=AI_MODEL,
+                    system_instruction=SYSTEM_PROMPT
+                )
 
-            self._last_call_time = time.time()
+                # Build prompt with key metrics only (keep tokens low)
+                user_prompt = self._build_prompt(symbol, snapshot)
 
-            # Parse response
-            raw_text = response.content[0].text.strip()
-            parsed = self._parse_decision(raw_text)
-            parsed["_raw_response"] = raw_text
+                response = model.generate_content(
+                    user_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=AI_MAX_TOKENS,
+                        temperature=AI_TEMPERATURE,
+                    )
+                )
 
-            return parsed
+                self._last_call_time = time.time()
 
-        except Exception as e:
-            error_type = type(e).__name__
-            print(f"[AI BRAIN] Claude API error ({error_type}): {e}")
-            print("[AI BRAIN] Falling back to mock decision...")
+                # Parse response
+                raw_text = response.text.strip()
+                parsed = self._parse_decision(raw_text)
+                parsed["_raw_response"] = raw_text
+                parsed["_key_index"] = self._api_keys.index(self._current_key)
 
-            # Fallback to mock on any API error
-            decision = self._mock_decision(symbol, snapshot)
-            decision["_fallback_reason"] = f"{error_type}: {str(e)[:100]}"
-            return decision
+                return parsed
+
+            except Exception as e:
+                last_error = e
+                error_type = type(e).__name__
+                key_idx = self._api_keys.index(self._current_key) if self._current_key in self._api_keys else -1
+                print(f"[AI BRAIN] Gemini API error (key #{key_idx}, attempt {attempt+1}): {error_type}: {e}")
+
+                # Rotate to next key and retry
+                self._rotate_key()
+                print(f"[AI BRAIN] Rotating to next API key...")
+
+        # All retries exhausted — fallback to mock
+        print("[AI BRAIN] All API keys exhausted. Falling back to mock decision...")
+        decision = self._mock_decision(symbol, snapshot)
+        decision["_fallback_reason"] = f"{type(last_error).__name__}: {str(last_error)[:100]}"
+        return decision
 
     def _build_prompt(self, symbol: str, snapshot: dict) -> str:
         """Build concise prompt from market snapshot (~500 tokens)."""
@@ -499,7 +547,7 @@ Analyze this data and provide your trading decision as JSON."""
             { insight: str, mode: str, context: str, timestamp: str }
         """
         if self.mode == "live":
-            insight = self._claude_analyze_context(context, data)
+            insight = self._gemini_analyze_context(context, data)
         else:
             insight = self._mock_analyze_context(context, data)
 
@@ -510,8 +558,8 @@ Analyze this data and provide your trading decision as JSON."""
             "timestamp": datetime.now().isoformat()
         }
 
-    def _claude_analyze_context(self, context: str, data: dict) -> str:
-        """Use Claude for general context analysis."""
+    def _gemini_analyze_context(self, context: str, data: dict) -> str:
+        """Use Gemini for general context analysis."""
         try:
             context_prompts = {
                 "market": "Analyze this market regime data and provide a 3-5 sentence insight about current conditions and what traders should watch for.",
@@ -523,18 +571,26 @@ Analyze this data and provide your trading decision as JSON."""
             system = "You are QuantTrade AI Analyst. Provide concise, actionable insights in 3-5 sentences. Be specific with numbers when available."
             prompt = f"{context_prompts.get(context, 'Analyze this data.')}\n\nData:\n{json.dumps(data, indent=2, default=str)[:1500]}"
 
-            response = self._client.messages.create(
-                model=AI_MODEL,
-                max_tokens=300,
-                temperature=0.4,
-                system=system,
-                messages=[{"role": "user", "content": prompt}]
+            genai.configure(api_key=self._current_key)
+            model = genai.GenerativeModel(
+                model_name=AI_MODEL,
+                system_instruction=system
+            )
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=300,
+                    temperature=0.4,
+                )
             )
 
-            return response.content[0].text.strip()
+            # Rotate key after each call for load distribution
+            self._rotate_key()
+            return response.text.strip()
 
         except Exception as e:
             print(f"[AI BRAIN] Context analysis error: {e}")
+            self._rotate_key()  # Rotate on error too
             return self._mock_analyze_context(context, data)
 
     def _mock_analyze_context(self, context: str, data: dict) -> str:

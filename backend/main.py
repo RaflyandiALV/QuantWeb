@@ -10,6 +10,7 @@ from backtest_engine import BacktestEngine
 from anomaly_scanner import AnomalyScanner
 from macro_intelligence import MacroIntelligence
 from global_market import GlobalMarketAnalyzer
+from db_utils import get_db_connection
 from alpha_data import AlphaDataProvider
 from alpha_features import AlphaFeatureEngine
 from ai_brain import AIBrain
@@ -28,8 +29,6 @@ import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import traceback
 import time
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 # =============================================================================
@@ -49,14 +48,31 @@ WATCHLIST_FILE = "watchlist.json" # Legacy backup file (Secondary storage)
 _scan_executor = ThreadPoolExecutor(max_workers=4)
 _symbol_executor = ThreadPoolExecutor(max_workers=3)
 
+# Global State for Streaming Scanner & Background Auto-Scan
+_scan_state = {
+    "status": "idle", # scanning, fetching, idle
+    "progress": 0,
+    "last_updated": None,
+    "LONG": {
+        "sectors": {},
+        "elite_signals": [],
+        "completed_sectors": 0
+    },
+    "SHORT": {
+        "sectors": {},
+        "elite_signals": [],
+        "completed_sectors": 0
+    }
+}
+
 # =============================================================================
 # 2. HELPER FUNCTIONS (UTILITIES)
 # =============================================================================
 
 def send_telegram_alert(message):
     """
-    Mengirim pesan notifikasi ke Telegram Bot.
-    Digunakan untuk alert sinyal trading dan status sistem.
+    Send notification message to Telegram Bot.
+    Used for trading signal alerts and system status.
     """
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -66,39 +82,46 @@ def send_telegram_alert(message):
     except Exception as e: 
         print(f"Telegram Error: {e}")
 
-def get_db_connection():
-    """
-    Membuat koneksi ke Database PostgreSQL (Supabase).
-    Menggunakan library psycopg2.
-    """
-    url = os.getenv("DATABASE_URL")
-    if not url:
-        print("[ERROR] DATABASE_URL tidak terbaca dari .env!")
-        return None
-    return psycopg2.connect(url, cursor_factory=RealDictCursor)
+def init_watchlist_table():
+    """Create the watchlist table if it doesn't exist."""
+    try:
+        conn = get_db_connection("market_data.db")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT UNIQUE NOT NULL,
+                mode TEXT DEFAULT 'AUTO',
+                strategy TEXT,
+                timeframe TEXT,
+                period TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("[DB] Watchlist table ready")
+    except Exception as e:
+        print(f"[DB] Watchlist table init error: {e}")
 
 def load_watchlist_from_db():
     """
-    Mengambil daftar pantauan (watchlist) dari Database.
-    Digunakan oleh Bot Scheduler.
+    Fetch the watchlist from SQLite Database.
+    Used by the Bot Scheduler.
     """
-    conn = get_db_connection()
-    if not conn: return []
     try:
+        conn = get_db_connection("market_data.db")
         cur = conn.cursor()
         cur.execute("SELECT symbol, mode, strategy, timeframe, period FROM watchlist")
-        rows = cur.fetchall()
-        cur.close()
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
         return rows
     except Exception as e:
-        print(f"DB Error: {e}")
+        print(f"[Watchlist DB Error] {e}")
         return []
-    finally:
-        conn.close()
 
 def calculate_rr_string(entry, tp, sl):
     """
-    Menghitung dan memformat Risk:Reward Ratio untuk display.
+    Calculate and format the Risk:Reward Ratio string for display.
     """
     try:
         risk = abs(entry - sl)
@@ -111,7 +134,7 @@ def calculate_rr_string(entry, tp, sl):
 
 def analyze_market_reason(best_strat, win_rate):
     """
-    Memberikan alasan naratif sederhana berdasarkan strategi yang terpilih.
+    Provide a simple narrative reason based on the selected strategy.
     """
     if best_strat == "HOLD ONLY": return "[UPTREND] Parabolic Run"
     elif best_strat == "MOMENTUM": return "[UPTREND] Strong Uptrend"
@@ -124,14 +147,57 @@ def analyze_market_reason(best_strat, win_rate):
 # 3. CORE LOGIC (STRATEGY & SCANNING)
 # =============================================================================
 
-def find_best_strategy_for_symbol(engine, symbol, mode="AUTO", manual_strat=None, manual_tf=None, manual_per=None):
+def _calculate_score(metrics):
     """
-    Core Logic: Mencari strategi terbaik atau menjalankan strategi manual.
-    Digunakan oleh Scanner API dan Bot Scheduler.
+    Composite quant score untuk pemilihan strategi terbaik.
+    Menggantikan win_rate * net_profit yang cacat secara matematis.
+
+    Menggunakan: Sharpe × ProfitFactor × (1 - MaxDD)
+    Returns -999 jika strategi tidak layak (drawdown > 30%, Sharpe <= 0,
+    atau profit factor <= 1).
+    """
+    sharpe       = metrics.get('sharpe_ratio', 0)
+    max_dd       = metrics.get('max_drawdown', 100) / 100
+    net_profit   = metrics.get('net_profit', 0)
+    profit_factor = metrics.get('profit_factor', 0)
+
+    # Jika profit_factor tidak ada di metrics, hitung dari trades_list
+    if profit_factor == 0:
+        trades_list = metrics.get('trades_list', [])
+        if trades_list:
+            gross_profit = sum(t['pnl_pct'] for t in trades_list if t['pnl_pct'] > 0)
+            gross_loss   = abs(sum(t['pnl_pct'] for t in trades_list if t['pnl_pct'] < 0))
+            profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else 0.0
+
+    # Gate 1: Max Drawdown > 30% → reject langsung
+    if max_dd > 0.30:
+        return -999
+
+    # Gate 2: Sharpe <= 0 → tidak ada alpha nyata
+    if sharpe <= 0:
+        return -999
+
+    # Gate 3: ProfitFactor <= 1 → lebih banyak loss dari profit
+    if profit_factor <= 1.0:
+        return -999
+
+    # Gate 4: Net profit harus positif
+    if net_profit <= 0:
+        return -999
+
+    # Composite: Sharpe × ProfitFactor × (1 - MaxDD)
+    return sharpe * profit_factor * (1 - max_dd)
+
+
+def find_best_strategy_for_symbol(engine, symbol, mode="AUTO", manual_strat=None, manual_tf=None, manual_per=None, direction="LONG"):
+    """
+    Core Logic: Find the best strategy or run a manual strategy.
+    Used by Scanner API and Bot Scheduler.
+    Considers direction (LONG/SHORT).
     """
     if mode == 'MANUAL':
-        # --- LOGIKA MANUAL ---
-        # Fetch Data Max agar indikator akurat (engine akan handle cache)
+        # --- MANUAL LOGIC ---
+        # Fetch Max Data so indicators are accurate (engine handles cache)
         df_raw = engine.fetch_data(symbol, requested_period="max", interval=manual_tf)
         
         if df_raw is not None and len(df_raw) > 30:
@@ -148,9 +214,9 @@ def find_best_strategy_for_symbol(engine, symbol, mode="AUTO", manual_strat=None
         return None
 
     else:
-        # --- LOGIKA AUTO (SCANNER) ---
+        # --- AUTO LOGIC (SCANNER) ---
         strategies = [
-            # KELOMPOK A: BASIC
+            # GROUP A: BASIC
             "MOMENTUM", "MEAN_REVERSAL", "GRID", "MULTITIMEFRAME",
             # KELOMPOK B: PRO (Risk Managed)
             "MOMENTUM_PRO", "MEAN_REVERSAL_PRO", "GRID_PRO", "MULTITIMEFRAME_PRO",
@@ -172,32 +238,39 @@ def find_best_strategy_for_symbol(engine, symbol, mode="AUTO", manual_strat=None
             for per in periods:
                 for strat in strategies:
                     # === CACHE-FIRST LOGIC ===
-                    cached = engine._get_cached_result(symbol, tf, per, strat)
+                    # To prevent LONG/SHORT cache collision without altering table schema just yet, 
+                    # we only use DB cache for LONG. For SHORT, we force recalculate.
+                    cached = None
+                    if direction == "LONG":
+                        cached = engine._get_cached_result(symbol, tf, per, strat)
                     
                     if cached:
                         # Cache HIT — skip backtest entirely
-                        print(f"   [CACHE HIT] {symbol} | {tf} | {per} | {strat}")
-                        metrics = cached  # cached sudah berisi dict metrics
+                        metrics = cached  # cached is dict metrics
                         signal_info = cached.get('signal_data', {})
                         rr_long = cached.get('rr_ratio', 'N/A')
                     else:
-                        # Cache MISS — harus hitung
-                        print(f"   [CACHE MISS] {symbol} | {tf} | {per} | {strat}")
-                        _, _, metrics, _ = engine.run_backtest(df_raw, strat, requested_period=per)
-                        signal_info = engine.get_signal_advice(df_raw, strat)
-                        rr_long = calculate_rr_string(signal_info['price'], signal_info['setup_long']['tp'], signal_info['setup_long']['sl'])
+                        # Cache MISS — recalculate
+                        try:
+                            _, _, metrics, _ = engine.run_backtest(df_raw, strat, requested_period=per, direction=direction)
+                            signal_info = engine.get_signal_advice(df_raw, strat)
+                            # rr string computation (dummy for SHORT for now)
+                            tp = signal_info.get('setup_short', {}).get('tp', 0) if direction == "SHORT" else signal_info.get('setup_long', {}).get('tp', 0)
+                            sl = signal_info.get('setup_short', {}).get('sl', 0) if direction == "SHORT" else signal_info.get('setup_long', {}).get('sl', 0)
+                            rr_long = calculate_rr_string(signal_info['price'], tp, sl)
+                        except TypeError: # Backward compatibility if run_backtest doesn't take direction
+                            _, _, metrics, _ = engine.run_backtest(df_raw, strat, requested_period=per)
+                            signal_info = engine.get_signal_advice(df_raw, strat)
+                            rr_long = calculate_rr_string(signal_info['price'], signal_info.get('setup_long', {}).get('tp', 0), signal_info.get('setup_long', {}).get('sl', 0))
                         
-                        # Save ke cache untuk next time
-                        engine._save_cache_result(symbol, tf, per, strat, metrics, signal_info, rr_long)
+                        # Save ke cache (but only LONG to not corrupt old schema, memory handles SHORT)
+                        if direction == "LONG":
+                            engine._save_cache_result(symbol, tf, per, strat, metrics, signal_info, rr_long)
                     
-                    if metrics.get('total_trades', 0) < 3: continue 
-                    
-                    # Score Logic: WinRate * Profit
-                    score = metrics.get('win_rate', 0) * metrics.get('net_profit', 0)
-                    
-                    # Boost Score untuk Strategy PRO (Risk Managed lebih disukai)
-                    if "_PRO" in strat:
-                        score *= 1.1 
+                    if metrics.get('total_trades', 0) < 3: continue
+
+                    # Composite Quant Score: Sharpe * ProfitFactor * (1 - MaxDD)
+                    score = _calculate_score(metrics)
 
                     if score > best_score:
                         best_score = score
@@ -205,7 +278,10 @@ def find_best_strategy_for_symbol(engine, symbol, mode="AUTO", manual_strat=None
                             "symbol": symbol, "strategy": strat, "timeframe": tf, "period": per,
                             "win_rate": metrics.get('win_rate', 0), "profit": metrics.get('net_profit', 0),
                             "trades": metrics.get('total_trades', 0), "signal_data": signal_info,
-                            "rr_ratio": rr_long, "mode": "AUTO", "max_dd": metrics.get('max_drawdown', 0)
+                            "rr_ratio": rr_long, "mode": "AUTO", "max_dd": metrics.get('max_drawdown', 0),
+                            "score": round(score, 4),
+                            "sharpe": round(metrics.get('sharpe_ratio', 0), 2),
+                            "profit_factor": round(metrics.get('profit_factor', 0), 2)
                         }
         return best_config
 
@@ -337,6 +413,7 @@ async def lifespan(app: FastAPI):
     portfolio_engine.init_portfolio_tables()
     risk_manager.init_risk_tables()
     init_scan_cache_table()
+    init_watchlist_table()
     def _take_portfolio_snapshot():
         try:
             eng = TradingEngine(api_key=BINANCE_API_KEY, api_secret=BINANCE_SECRET_KEY)
@@ -346,6 +423,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_take_portfolio_snapshot, 'interval', minutes=5)
     # Take initial snapshot on startup
     _take_portfolio_snapshot()
+    
+    # Trigger auto-scan globally on startup
+    print("System Startup: Kicking off background auto-scan for LONG and SHORT...")
+    _scan_executor.submit(_run_background_scan, 1000.0, False)
     
     scheduler.start()
     
@@ -369,6 +450,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount IOS Features router (sector scanner + trade logs)
+from ios_features import router as ios_router
+app.include_router(ios_router)
 
 # =============================================================================
 # 6. DATA MODELS
@@ -428,7 +513,7 @@ def get_bot_status():
             "used_usdt": round(bal.get('USDT', {}).get('used', 0), 2),
         }
     except Exception as e:
-        print(f"⚠️ Balance fetch error: {e}")
+        print(f"[WARN] Balance fetch error: {e}")
         status["balance"] = {"total_usdt": 0, "free_usdt": 0, "used_usdt": 0}
     
     return status
@@ -468,7 +553,7 @@ def get_portfolio():
             "usdt_free": round(bal.get('USDT', {}).get('free', 0), 2),
         }
     except Exception as e:
-        print(f"⚠️ Portfolio Error: {e}")
+        print(f"[WARN] Portfolio Error: {e}")
         raise HTTPException(status_code=500, detail=f"Portfolio fetch failed: {e}")
 
 
@@ -826,18 +911,18 @@ def read_root():
 
 @app.get("/api/watchlist")
 def get_watchlist():
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Database Error")
-    
-    cur = conn.cursor()
-    cur.execute("SELECT symbol, mode, strategy, timeframe, period FROM watchlist ORDER BY created_at DESC")
-    items = cur.fetchall()
-    cur.close()
-    conn.close()
-    
+    try:
+        conn = get_db_connection("market_data.db")
+        cur = conn.cursor()
+        cur.execute("SELECT symbol, mode, strategy, timeframe, period FROM watchlist ORDER BY created_at DESC")
+        items = [dict(r) for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database Error: {e}")
+
     results = []
     engine = TradingEngine(initial_capital=1000)
-    
+
     for item in items:
         try:
             config = find_best_strategy_for_symbol(
@@ -867,34 +952,29 @@ def get_watchlist():
 
 @app.post("/api/watchlist")
 def add_watchlist(item: WatchlistItem):
-    conn = get_db_connection()
-    if not conn: raise HTTPException(status_code=500, detail="Database error")
-    cur = conn.cursor()
+    import sqlite3
     try:
+        conn = get_db_connection("market_data.db")
+        cur = conn.cursor()
         cur.execute(
-            """INSERT INTO watchlist (symbol, mode, strategy, timeframe, period) 
-               VALUES (%s, %s, %s, %s, %s)""",
+            """INSERT INTO watchlist (symbol, mode, strategy, timeframe, period)
+               VALUES (?, ?, ?, ?, ?)""",
             (item.symbol.upper(), item.mode, item.strategy, item.timeframe, item.period)
         )
         conn.commit()
-    except psycopg2.IntegrityError:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail="Simbol sudah ada di watchlist")
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        cur.close()
         conn.close()
-    return {"status": "success", "message": f"{item.symbol} berhasil ditambahkan"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Symbol already exists in watchlist")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "success", "message": f"{item.symbol} added successfully"}
 
 @app.delete("/api/watchlist/{symbol}")
 def delete_watchlist(symbol: str):
-    conn = get_db_connection()
+    conn = get_db_connection("market_data.db")
     cur = conn.cursor()
-    cur.execute("DELETE FROM watchlist WHERE symbol = %s", (symbol.upper(),))
+    cur.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
     conn.commit()
-    cur.close()
     conn.close()
     return {"status": "deleted"}
 
@@ -903,7 +983,7 @@ def run_backtest(req: StrategyRequest):
     engine = TradingEngine(initial_capital=req.capital)
     df_raw = engine.fetch_data(req.symbol, requested_period="max", interval=req.timeframe, start_date=req.start_date, end_date=req.end_date)
     
-    if df_raw is None or len(df_raw) < 30: raise HTTPException(status_code=404, detail=f"Data kosong {req.symbol}.")
+    if df_raw is None or len(df_raw) < 30: raise HTTPException(status_code=404, detail=f"Data empty for {req.symbol}.")
 
     # Pass direction to run_backtest
     direction = req.direction.upper() if req.direction else "LONG"
@@ -984,68 +1064,60 @@ def compare_strategies(req: StrategyRequest):
 # =============================================================================
 
 def init_scan_cache_table():
-    """Create scan_cache table if not exists."""
-    conn = get_db_connection()
-    if not conn: return
+    """Create scan_cache table if not exists (SQLite)."""
     try:
-        cur = conn.cursor()
-        cur.execute("""
+        conn = get_db_connection("market_data.db")
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS scan_cache (
                 sector TEXT PRIMARY KEY,
-                results JSONB DEFAULT '[]',
-                elite_signals JSONB DEFAULT '[]',
-                scanned_at TIMESTAMPTZ DEFAULT NOW()
+                results TEXT DEFAULT '[]',
+                elite_signals TEXT DEFAULT '[]',
+                scanned_at TEXT DEFAULT (datetime('now'))
             )
         """)
         conn.commit()
+        conn.close()
         print("[INFO] Scan cache table initialized")
     except Exception as e:
         print(f"[ERROR] init_scan_cache_table: {e}")
-    finally:
-        conn.close()
 
 def save_scan_results(sector, results, elite_signals):
-    """Save scan results to DB cache for instant reload."""
-    conn = get_db_connection()
-    if not conn: return
+    """Save scan results to SQLite cache for instant reload."""
     try:
-        cur = conn.cursor()
-        cur.execute("""
+        conn = get_db_connection("market_data.db")
+        conn.execute("""
             INSERT INTO scan_cache (sector, results, elite_signals, scanned_at)
-            VALUES (%s, %s, %s, NOW())
+            VALUES (?, ?, ?, datetime('now'))
             ON CONFLICT (sector) DO UPDATE SET
-                results = EXCLUDED.results,
-                elite_signals = EXCLUDED.elite_signals,
-                scanned_at = NOW()
+                results = excluded.results,
+                elite_signals = excluded.elite_signals,
+                scanned_at = datetime('now')
         """, (sector, json.dumps(results), json.dumps(elite_signals)))
         conn.commit()
+        conn.close()
     except Exception as e:
         print(f"[ERROR] save_scan_results: {e}")
-    finally:
-        conn.close()
 
 def load_last_scan_results():
-    """Load all cached scan results from DB."""
-    conn = get_db_connection()
-    if not conn: return {}
+    """Load all cached scan results from SQLite."""
     try:
+        conn = get_db_connection("market_data.db")
         cur = conn.cursor()
         cur.execute("SELECT sector, results, elite_signals, scanned_at FROM scan_cache ORDER BY scanned_at DESC")
-        rows = cur.fetchall()
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
         return rows
     except Exception as e:
         print(f"[ERROR] load_last_scan_results: {e}")
         return []
-    finally:
-        conn.close()
 
-def _scan_single_symbol(sym, capital, force_reload=False):
+def _scan_single_symbol(sym, capital, force_reload=False, direction="LONG"):
     """Scan a single symbol — designed for parallel execution."""
     try:
         engine = TradingEngine(initial_capital=capital)
         if force_reload:
             engine.fetch_data(sym, requested_period="1mo", interval="1d", force_reload=True)
-        best_config = find_best_strategy_for_symbol(engine, sym, mode="AUTO")
+        best_config = find_best_strategy_for_symbol(engine, sym, mode="AUTO", direction=direction)
         if best_config:
             best_config['reason'] = analyze_market_reason(best_config['strategy'], best_config['win_rate'])
             return best_config
@@ -1053,13 +1125,13 @@ def _scan_single_symbol(sym, capital, force_reload=False):
         print(f"[ERROR] Scanning {sym}: {e}")
     return None
 
-def _scan_sector_parallel(sector_id, capital, force_reload=False):
+def _scan_sector_parallel(sector_id, capital, force_reload=False, direction="LONG"):
     """Scan all symbols in a sector using parallel symbol processing."""
     symbols = SECTORS.get(sector_id, [])
     if not symbols:
         return sector_id, [], []
     
-    print(f"\n🚀 PARALLEL SCAN: {sector_id} ({len(symbols)} symbols)")
+    print(f"\n[SCAN] {direction} PARALLEL SCAN: {sector_id} ({len(symbols)} symbols)")
     start = time.time()
     
     scan_results = []
@@ -1068,7 +1140,7 @@ def _scan_sector_parallel(sector_id, capital, force_reload=False):
     # Process symbols in parallel (max 3 concurrent)
     futures = {}
     for sym in symbols:
-        future = _symbol_executor.submit(_scan_single_symbol, sym, capital, force_reload)
+        future = _symbol_executor.submit(_scan_single_symbol, sym, capital, force_reload, direction)
         futures[future] = sym
     
     for future in as_completed(futures):
@@ -1079,17 +1151,41 @@ def _scan_sector_parallel(sector_id, capital, force_reload=False):
                 scan_results.append(result)
                 if result.get('win_rate', 0) >= 60 and result.get('trades', 0) >= 15:
                     elite_signals.append(result)
-                print(f"  ✅ {sym} done")
+                print(f"  [OK] {sym} done (score={result.get('score', 'N/A')})")
             else:
-                print(f"  ⚪ {sym} no viable strategy")
+                print(f"  [SKIP] {sym} no viable strategy")
         except Exception as e:
-            print(f"  ❌ {sym} error: {e}")
+            print(f"  [ERROR] {sym} error: {e}")
     
     elapsed = time.time() - start
-    print(f"✅ {sector_id} completed in {elapsed:.1f}s ({len(scan_results)} results)")
+    print(f"[OK] {sector_id} completed in {elapsed:.1f}s ({len(scan_results)} results)")
     
-    # Save to cache
-    save_scan_results(sector_id, scan_results, elite_signals)
+    # Save to cache (only DB cache LONG for backward compatibility, memory state handles both)
+    if direction == "LONG":
+        save_scan_results(sector_id, scan_results, elite_signals)
+        
+    # Map sector id to display name
+    sector_name = sector_id
+    for s in [{"id": "BIG_CAP", "name": "Big Cap & L1"}, {"id": "AI_COINS", "name": "AI Narratives"},
+              {"id": "MEME_COINS", "name": "Meme Coins"}, {"id": "DEFI", "name": "DeFi Bluechips"},
+              {"id": "LAYER_2", "name": "Layer 2 & ZK"}, {"id": "GAMING", "name": "Gaming & Metaverse"},
+              {"id": "RWA", "name": "Real World Assets"}, {"id": "INFRA", "name": "Infrastructure"},
+              {"id": "PRIVACY_ZK", "name": "Privacy & ZK"}, {"id": "NEW_LISTINGS", "name": "Hot & New"},
+              {"id": "CEX_TOKENS", "name": "Exchange Tokens"}, {"id": "YIELD_STAKING", "name": "Yield & Staking"}]:
+        if s["id"] == sector_id:
+            sector_name = s["name"]
+            break
+            
+    # Update global scan state incrementally
+    global _scan_state
+    _scan_state[direction]["sectors"][sector_name] = scan_results
+    _scan_state[direction]["elite_signals"].extend(elite_signals)
+    # Sort elites
+    _scan_state[direction]["elite_signals"].sort(key=lambda x: x.get('score', 0), reverse=True)
+    _scan_state[direction]["elite_signals"] = _scan_state[direction]["elite_signals"][:10]
+    _scan_state[direction]["completed_sectors"] += 1
+    _scan_state["progress"] = min(99, int((_scan_state[direction]["completed_sectors"] / len(SECTORS)) * 100))
+    _scan_state["last_updated"] = datetime.now().isoformat()
     
     return sector_id, scan_results, elite_signals
 
@@ -1109,7 +1205,7 @@ def scan_market(req: ScanRequest):
     else:
         symbols = SECTORS.get(req.sector, [])
     
-    if not symbols: raise HTTPException(status_code=404, detail="Sektor/Simbol tidak ditemukan")
+    if not symbols: raise HTTPException(status_code=404, detail="Sector/Symbol not found")
     
     print(f"🚀 STARTING SCAN: {req.sector} ({len(symbols)} symbols)")
     scan_results = []
@@ -1132,7 +1228,7 @@ def scan_market(req: ScanRequest):
         except Exception as e:
             print(f"Error scanning {sym}: {e}")
     
-    elite_signals.sort(key=lambda x: (x['win_rate'], x['trades']), reverse=True)
+    elite_signals.sort(key=lambda x: x.get('score', 0), reverse=True)
     
     # Save to cache for instant reload
     save_scan_results(req.sector, scan_results, elite_signals)
@@ -1140,111 +1236,112 @@ def scan_market(req: ScanRequest):
     return { "sector": req.sector, "results": scan_results, "elite_signals": elite_signals[:10] }
 
 
-@app.post("/api/scan-all")
-def scan_all_sectors(req: ScanRequest):
-    """
-    Batch scan ALL sectors in parallel using ThreadPoolExecutor.
-    Returns complete results for all sectors in one response.
-    ~3-4x faster than sequential scanning.
-    """
-    start_time = time.time()
+def _run_background_scan(capital: float, force_reload: bool):
+    """Background task to run BOTH LONG and SHORT scans."""
+    global _scan_state
+    _scan_state["status"] = "scanning"
+    _scan_state["progress"] = 0
+    _scan_state["last_updated"] = datetime.now().isoformat()
+    
+    # Reset state
+    for d in ["LONG", "SHORT"]:
+        _scan_state[d]["sectors"] = {}
+        _scan_state[d]["elite_signals"] = []
+        _scan_state[d]["completed_sectors"] = 0
+
     sector_ids = list(SECTORS.keys())
-    all_results = {}
-    all_elites = []
     
-    print(f"\n{'='*60}")
-    print(f"🚀🚀🚀 PARALLEL SCAN ALL: {len(sector_ids)} sectors")
-    print(f"{'='*60}")
-    
-    # Process sectors in parallel (max 4 concurrent)
+    # Run LONG direction
     futures = {}
     for sector_id in sector_ids:
-        future = _scan_executor.submit(
-            _scan_sector_parallel, sector_id, req.capital, req.force_reload
-        )
+        future = _scan_executor.submit(_scan_sector_parallel, sector_id, capital, force_reload, "LONG")
         futures[future] = sector_id
-    
     for future in as_completed(futures):
-        sector_id = futures[future]
-        try:
-            _, results, elites = future.result(timeout=600)  # 10 min timeout per sector
-            # Find the sector display name
-            sector_name = sector_id
-            for s in [{"id": "BIG_CAP", "name": "Big Cap & L1"}, {"id": "AI_COINS", "name": "AI Narratives"},
-                      {"id": "MEME_COINS", "name": "Meme Coins"}, {"id": "DEFI", "name": "DeFi Bluechips"},
-                      {"id": "LAYER_2", "name": "Layer 2 & ZK"}, {"id": "GAMING", "name": "Gaming & Metaverse"},
-                      {"id": "RWA", "name": "Real World Assets"}, {"id": "INFRA", "name": "Infrastructure"},
-                      {"id": "PRIVACY_ZK", "name": "Privacy & ZK"}, {"id": "NEW_LISTINGS", "name": "Hot & New"},
-                      {"id": "CEX_TOKENS", "name": "Exchange Tokens"}, {"id": "YIELD_STAKING", "name": "Yield & Staking"}]:
-                if s["id"] == sector_id:
-                    sector_name = s["name"]
-                    break
-            all_results[sector_name] = results
-            all_elites.extend(elites)
-        except Exception as e:
-            print(f"❌ Sector {sector_id} failed: {e}")
-    
-    # Sort elites globally
-    all_elites.sort(key=lambda x: (x.get('win_rate', 0), x.get('trades', 0)), reverse=True)
-    
-    elapsed = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"✅ ALL SECTORS COMPLETE in {elapsed:.1f}s")
-    print(f"{'='*60}")
-    
-    return {
-        "sectors": all_results,
-        "elite_signals": all_elites[:10],
-        "scan_time_seconds": round(elapsed, 1),
-        "total_results": sum(len(v) for v in all_results.values())
-    }
+        try: future.result(timeout=600)
+        except Exception as e: print(f"[ERROR BACKGROUND LONG] {e}")
+
+    # Run SHORT direction
+    futures = {}
+    for sector_id in sector_ids:
+        future = _scan_executor.submit(_scan_sector_parallel, sector_id, capital, force_reload, "SHORT")
+        futures[future] = sector_id
+    for future in as_completed(futures):
+        try: future.result(timeout=600)
+        except Exception as e: print(f"[ERROR BACKGROUND SHORT] {e}")
+
+    _scan_state["status"] = "idle"
+    _scan_state["progress"] = 100
+    _scan_state["last_updated"] = datetime.now().isoformat()
+    print("\n[✔] COMPLETE BACKGROUND SCAN (LONG & SHORT)")
 
 
-@app.get("/api/last-scan")
-def get_last_scan():
+@app.post("/api/scan-start")
+def start_scan(req: ScanRequest):
     """
-    Return cached scan results from DB for instant UI loading.
-    No VPN or Binance calls needed — pure DB read.
+    Start scanning in the background. Return immediately.
+    Frontend should poll /api/scan-status.
     """
-    rows = load_last_scan_results()
-    if not rows:
-        return { "sectors": {}, "elite_signals": [], "cached": False }
+    global _scan_state
+    if _scan_state["status"] == "scanning":
+        return {"message": "Scan already in progress", "status": "scanning"}
+        
+    # Kick off background thread
+    _scan_executor.submit(_run_background_scan, req.capital, req.force_reload)
     
-    # Reconstruct the same format as scan-all response
-    sectors = {}
-    all_elites = []
-    latest_time = None
+    return {"message": "Scan started", "status": "scanning"}
+
+
+
+@app.get("/api/scan-status")
+def get_scan_status(direction: str = "LONG"):
+    """
+    Return current scan state incrementally, instantly checking _scan_state.
+    If state is completely empty, it tries to load LONG from sqlite cache for fallback.
+    """
+    global _scan_state
+    direction = direction.upper() if direction.upper() in ["LONG", "SHORT"] else "LONG"
     
-    # Map sector IDs to display names
-    SECTOR_NAMES = {
-        "BIG_CAP": "Big Cap & L1", "AI_COINS": "AI Narratives",
-        "MEME_COINS": "Meme Coins", "DEFI": "DeFi Bluechips",
-        "LAYER_2": "Layer 2 & ZK", "GAMING": "Gaming & Metaverse",
-        "RWA": "Real World Assets", "INFRA": "Infrastructure",
-        "PRIVACY_ZK": "Privacy & ZK", "NEW_LISTINGS": "Hot & New",
-        "CEX_TOKENS": "Exchange Tokens", "YIELD_STAKING": "Yield & Staking"
-    }
+    state_dir = _scan_state[direction]
+    total_db_results = sum(len(v) for v in state_dir["sectors"].values())
     
-    for row in rows:
-        sector_id = row['sector']
-        display_name = SECTOR_NAMES.get(sector_id, sector_id)
-        results = row['results'] if isinstance(row['results'], list) else json.loads(row['results']) if row['results'] else []
-        elites = row['elite_signals'] if isinstance(row['elite_signals'], list) else json.loads(row['elite_signals']) if row['elite_signals'] else []
-        sectors[display_name] = results
-        all_elites.extend(elites)
-        if row.get('scanned_at'):
-            ts = row['scanned_at']
-            if latest_time is None or str(ts) > str(latest_time):
-                latest_time = ts
-    
-    all_elites.sort(key=lambda x: (x.get('win_rate', 0), x.get('trades', 0)), reverse=True)
-    
+    # Fallback to DB if Memory is completely empty (and direction is LONG)
+    if total_db_results == 0 and direction == "LONG" and _scan_state["status"] == "idle":
+        rows = load_last_scan_results()
+        if rows:
+            sectors = {}
+            all_elites = []
+            SECTOR_NAMES = {
+                "BIG_CAP": "Big Cap & L1", "AI_COINS": "AI Narratives",
+                "MEME_COINS": "Meme Coins", "DEFI": "DeFi Bluechips",
+                "LAYER_2": "Layer 2 & ZK", "GAMING": "Gaming & Metaverse",
+                "RWA": "Real World Assets", "INFRA": "Infrastructure",
+                "PRIVACY_ZK": "Privacy & ZK", "NEW_LISTINGS": "Hot & New",
+                "CEX_TOKENS": "Exchange Tokens", "YIELD_STAKING": "Yield & Staking"
+            }
+            for row in rows:
+                sector_id = row['sector']
+                display_name = SECTOR_NAMES.get(sector_id, sector_id)
+                results = row['results'] if isinstance(row['results'], list) else json.loads(row['results']) if row['results'] else []
+                elites = row['elite_signals'] if isinstance(row['elite_signals'], list) else json.loads(row['elite_signals']) if row['elite_signals'] else []
+                sectors[display_name] = results
+                all_elites.extend(elites)
+            all_elites.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            # Seed state with DB contents
+            _scan_state["LONG"]["sectors"] = sectors
+            _scan_state["LONG"]["elite_signals"] = all_elites[:10]
+            _scan_state["LONG"]["completed_sectors"] = len(sectors)
+            total_db_results = sum(len(v) for v in sectors.values())
+            _scan_state["progress"] = 100
+
     return {
-        "sectors": sectors,
-        "elite_signals": all_elites[:10],
+        "status": _scan_state["status"],
+        "progress": _scan_state["progress"],
+        "sectors": _scan_state[direction]["sectors"],
+        "elite_signals": _scan_state[direction]["elite_signals"][:10],
         "cached": True,
-        "last_scan_time": str(latest_time) if latest_time else None,
-        "total_results": sum(len(v) for v in sectors.values())
+        "total_results": total_db_results,
+        "last_updated": _scan_state["last_updated"]
     }
 
 @app.post("/api/monte-carlo")
@@ -1380,14 +1477,14 @@ def btc_radar(req: ScanRequest):
             # Case 3: Low correlation (< 0.3) = decoupled
             elif abs(corr) < 0.3 and abs(coin_30d_return) > 10:
                 is_anomaly = True
-                anomaly_reason = f"⚡ Decoupled — Low BTC correlation ({corr:.2f}) with {coin_30d_return:+.1f}% move"
+                anomaly_reason = f"[FAST] Decoupled — Low BTC correlation ({corr:.2f}) with {coin_30d_return:+.1f}% move"
             
             if is_anomaly:
                 coin_data["anomaly_reason"] = anomaly_reason
                 anomalies.append(coin_data)
                 
         except Exception as e:
-            print(f"⚠️ BTC Radar Error for {coin}: {e}")
+            print(f"[WARN] BTC Radar Error for {coin}: {e}")
             continue
     
     # Sort correlations by absolute return (most interesting first)
@@ -1625,12 +1722,14 @@ def configure_paper_trader(config: PaperTraderConfig):
                 paper_trader_instance.execution_manager.leverage = config.leverage
             updated["leverage"] = config.leverage
         if config.use_testnet is not None:
-            # Recreate execution manager if mode changes
-            paper_trader_instance.paper_mode = not config.use_testnet
+            # CRITICAL: Always use paper_mode=True with testnet to avoid
+            # deprecated Binance sandbox. paper_mode=False only for live.
+            paper_mode = True if config.use_testnet else False
+            paper_trader_instance.paper_mode = paper_mode
             paper_trader_instance.use_testnet = config.use_testnet
             from execution_engine import FuturesExecutionManager
             paper_trader_instance.executor = FuturesExecutionManager(
-                paper_mode=not config.use_testnet, 
+                paper_mode=paper_mode, 
                 use_testnet=config.use_testnet
             )
             updated["use_testnet"] = config.use_testnet
@@ -1657,7 +1756,8 @@ def stop_paper_trader():
 @app.get("/api/paper-trader/trades")
 def get_paper_trades(limit: int = 100):
     """Get paper trade history."""
-    return paper_trader_instance.get_trades(limit)
+    trades = paper_trader_instance.get_trades(limit)
+    return {"trades": trades}
 
 @app.post("/api/paper-trader/cycle")
 def run_paper_cycle():

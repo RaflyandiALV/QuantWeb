@@ -1,0 +1,18 @@
+1. terdapat bug dimana di scanner signal LDO-USDT 1h 1y Momentum_pro profit 2.148, sedangkan muncul dielite signal LDO-USDT Mean_Reversal_Pro 4H profit 1Y 1,659,79 , dan juga Ketika saya buka LDO-USDT Profit tertinggi ada diMean Reversal 4H 1Y profit 4.443 . jadi apa logic behind yang ada di Elite signal? apakah best profit? apakah sharpee rationya ? atau bagaimana? jelaskan, jika ini adalah bug perbaiki !
+
+2. pada Backtest lab Ketika saya otak atik Time frame , Portofolio Growthnya tidak menyesuaikan dengan posisi price chartnya, sebagai contoh jika daily maka Portofolio growth chart dengan price chart sumbu horizontalnya sejajar, namun Ketika saya ubah ke 4H atau 1H atau timeframe lainya portofolionya tetap di daily, sehingga tidak sejajar, dan Ketika saya scroll kesamping diprice chart saya ingin portofolio growth juga ikut, agar ter lock sejajar posisinya kemanapun saya scroll 
+
+3. Saya ingin Backtest Lab, Strategy Matrix, PNL Segmentation 1 halaman dengan scanner signal, Elite Gems dan juga watchlist (scroll page), jadi hilangkan pada navigation header hanya terdapat Core dan tidak ada dropdown Backtest lab, strategy matrix,Pnl Segementation, serta pada intellingence dan saya ingin ketika scanner signal saya klik maka secara auto akan langsung ke backtest lab dengan konfigurasi settingan dari scanner signal atau elite signal
+
+4. untuk page Macro Intel, dan juga Global Market saya ingin UI UX nya agar mirip dengan page AI Insight(Market Microstructure) agar UI UX nya konsisten
+
+5. pada page Paper trading saya ingin UI UXnya seperti bot tracker dan page operations yang lainnya agar UI UX nya konsisten
+
+6. Dari beberapa revisi tersebut Update Navigation Headernya
+
+7. Hilangkan Semua Emoji pada semua page
+
+8. pada scanner signal Ketika sudah selesai scan 1 sector maka sector terseut langsung dimunculkan,karena saat ini harus selesai semua sector baru muncul semua membuat user seakan crash atau lag webnya
+
+9. semua informasi yang Bahasa Indonesia ubah kedalam Bahasa english
+

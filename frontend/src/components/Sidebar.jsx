@@ -7,19 +7,9 @@ import {
 
 const NAV_GROUPS = [
     {
-        label: 'Core',
-        items: [
-            { id: 'BACKTEST', label: 'Backtest Lab', icon: Play, color: '#22d3ee' },
-            { id: 'MATRIX', label: 'Strategy Matrix', icon: Layers, color: '#a78bfa' },
-            { id: 'PNL', label: 'PnL Segmentation', icon: ArrowLeftRight, color: '#3b82f6' },
-        ]
-    },
-    {
         label: 'Intelligence',
         items: [
-            { id: 'SCANNER', label: 'Scanner Signals', icon: Search, color: '#6366f1' },
             { id: 'ANALYTICS', label: 'Market Analytics', icon: BarChart2, color: '#a855f7' },
-            { id: 'ELITE', label: 'Elite Gems', icon: Gem, color: '#eab308' },
             { id: 'ANOMALY', label: 'Anomaly Scanner', icon: Radar, color: '#f97316' },
             { id: 'MACRO', label: 'Macro Intel', icon: Globe, color: '#06b6d4' },
             { id: 'GLOBAL_MARKET', label: 'Global Market', icon: LineChart, color: '#f59e0b' },
@@ -36,16 +26,13 @@ const NAV_GROUPS = [
             { id: 'FUND', label: 'Fund Analytics', icon: Trophy, color: '#f59e0b' },
         ]
     },
-    {
-        label: 'Tools',
-        items: [
-            { id: 'WATCHLIST', label: 'Watchlist', icon: Eye, color: '#8b5cf6' },
-        ]
-    },
 ];
 
 // Flatten for quick lookup
-const ALL_ITEMS = NAV_GROUPS.flatMap(g => g.items);
+const ALL_ITEMS = [
+    { id: 'CORE', label: 'Core', icon: Play, color: '#22d3ee' },
+    ...NAV_GROUPS.flatMap(g => g.items)
+];
 
 const DropdownGroup = ({ group, activeView, onSelect }) => {
     const [open, setOpen] = useState(false);
@@ -107,6 +94,7 @@ const Sidebar = ({ activeView, onViewChange }) => {
     };
 
     const activeItem = ALL_ITEMS.find(i => i.id === activeView);
+    const isCoreActive = activeView === 'CORE';
 
     return (
         <>
@@ -122,8 +110,20 @@ const Sidebar = ({ activeView, onViewChange }) => {
                         </div>
                     </div>
 
-                    {/* Desktop Nav Groups */}
+                    {/* Desktop Nav */}
                     <div className="topnav-groups">
+                        {/* Core — direct button, no dropdown */}
+                        <button
+                            className={`topnav-group-btn ${isCoreActive ? 'topnav-group-btn--active' : ''}`}
+                            onClick={() => handleSelect('CORE')}
+                            style={isCoreActive ? { '--accent': '#22d3ee' } : undefined}
+                        >
+                            <Play size={14} style={{ color: '#22d3ee' }} />
+                            <span className="topnav-group-label">Core</span>
+                            {isCoreActive && <div className="topnav-group-indicator" style={{ background: '#22d3ee' }} />}
+                        </button>
+
+                        {/* Dropdown groups */}
                         {NAV_GROUPS.map(group => (
                             <DropdownGroup
                                 key={group.label}
@@ -155,6 +155,17 @@ const Sidebar = ({ activeView, onViewChange }) => {
                 {/* Mobile dropdown */}
                 {mobileOpen && (
                     <div className="topnav-mobile-dropdown">
+                        {/* Core direct button in mobile */}
+                        <div className="topnav-mobile-group">
+                            <button
+                                className={`topnav-mobile-item ${isCoreActive ? 'topnav-mobile-item--active' : ''}`}
+                                onClick={() => handleSelect('CORE')}
+                            >
+                                <Play size={16} style={{ color: '#22d3ee' }} />
+                                <span>Core</span>
+                            </button>
+                        </div>
+
                         {NAV_GROUPS.map(group => (
                             <div key={group.label} className="topnav-mobile-group">
                                 <div className="topnav-mobile-group-label">{group.label}</div>

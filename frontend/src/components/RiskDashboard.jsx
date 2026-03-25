@@ -4,7 +4,8 @@ import {
     Layers, Zap, CheckCircle2, XCircle, Bell, Save
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 
 // ======== GAUGE COMPONENT ========
 const RiskGauge = ({ label, value, max, unit = '%', icon: Icon, warning = false, critical = false }) => {
@@ -37,7 +38,7 @@ const RiskDashboard = () => {
     const fetchDashboard = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/risk-dashboard`);
+            const res = await fetch(`${API_BASE}/api/risk-dashboard`);
             if (res.ok) {
                 const data = await res.json();
                 setDashboard(data);
@@ -59,7 +60,7 @@ const RiskDashboard = () => {
     const handleSaveConfig = async () => {
         setSaving(true);
         try {
-            const res = await fetch(`${API_URL}/api/risk-config`, {
+            const res = await fetch(`${API_BASE}/api/risk-config`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(localConfig),
@@ -95,7 +96,7 @@ const RiskDashboard = () => {
                         <Shield size={20} className="text-red-400" /> Risk Management
                     </h2>
                     <div className={`px-3 py-1 rounded-full text-xs font-bold border ${m.enabled ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-                        {m.enabled ? '🛡️ ACTIVE' : '⚠️ DISABLED'}
+                        {m.enabled ? ' ACTIVE' : ' DISABLED'}
                     </div>
                 </div>
                 <button onClick={fetchDashboard} disabled={loading} className="flex items-center gap-1 text-xs text-gray-400 hover:text-cyan-400 transition px-3 py-1.5 rounded-lg border border-gray-700 hover:border-cyan-500/30">
@@ -272,7 +273,7 @@ const RiskDashboard = () => {
 
                     {alerts.length === 0 ? (
                         <div className="text-center py-16 border-2 border-dashed border-gray-800 rounded-xl">
-                            <div className="text-4xl mb-3">🛡️</div>
+                            <div className="text-4xl mb-3"></div>
                             <p className="text-gray-500 text-sm">No risk alerts yet.</p>
                             <p className="text-xs text-gray-600 mt-1">Alerts will appear when risk limits are triggered during trade execution.</p>
                         </div>
@@ -371,7 +372,7 @@ const RiskDashboard = () => {
 
             {/* Info footer */}
             <div className="mt-6 bg-red-900/10 border border-red-500/20 p-4 rounded-xl">
-                <h4 className="font-bold text-red-400 text-sm mb-1">🛡️ How Risk Management Works</h4>
+                <h4 className="font-bold text-red-400 text-sm mb-1"> How Risk Management Works</h4>
                 <p className="text-xs text-red-200/80 leading-relaxed">
                     Before every trade, the bot runs 4 risk checks: <strong>Max Drawdown</strong> (stop if portfolio drops too far),{' '}
                     <strong>Position Size</strong> (max % of equity per coin), <strong>Max Positions</strong> (cap simultaneous trades),{' '}

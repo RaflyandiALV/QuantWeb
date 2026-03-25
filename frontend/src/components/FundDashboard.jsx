@@ -8,7 +8,8 @@ import {
     ArrowUpRight, ArrowDownRight, RefreshCw, Scale
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 
 const KPI_COLOR_MAP = {
     cyan: { border: 'border-cyan-500/20', hoverBorder: 'hover:border-cyan-500/40', text: 'text-cyan-400' },
@@ -103,7 +104,7 @@ const FundDashboard = () => {
     const fetchMetrics = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/api/fund/performance`);
+            const res = await fetch(`${API_BASE}/api/fund/performance`);
             if (res.ok) {
                 setMetrics(await res.json());
             }

@@ -115,8 +115,14 @@ class FuturesExecutionManager:
         self.api_key = os.getenv("BINANCE_API_KEY")
         self.api_secret = os.getenv("BINANCE_SECRET_KEY")
         self.use_testnet = use_testnet
-        self.paper_mode = paper_mode
         self.leverage = leverage
+
+        # CRITICAL: Binance Futures testnet/sandbox is DEPRECATED in CCXT.
+        # Force paper mode when testnet is requested to avoid errors.
+        if use_testnet:
+            paper_mode = True
+
+        self.paper_mode = paper_mode
 
         # Paper mode tracking
         self._paper_positions = {}  # {symbol: {side, qty, entry_price, sl, tp, pnl}}
@@ -132,13 +138,8 @@ class FuturesExecutionManager:
                     'options': {'defaultType': 'future'},
                     'timeout': 30000,
                 })
-                if self.use_testnet:
-                    self.exchange.set_sandbox_mode(True)
-                    print("[FUTURES] Running in TESTNET Futures Mode (Sandbox)")
-                else:
-                    print("[FUTURES] ⚠️ Running in REAL MONEY Futures Mode")
-
-                # Set leverage
+                # NOTE: sandbox_mode is NOT used — it's deprecated for futures
+                print("[FUTURES] [WARN] Running in REAL MONEY Futures Mode")
                 self._exchange_ready = True
             except Exception as e:
                 print(f"[FUTURES] Exchange init failed: {e}")
@@ -516,4 +517,4 @@ if __name__ == "__main__":
     else:
         print("   Skipped (no price data)")
 
-    print("\n✅ Execution engine test completed!")
+    print("\n[OK] Execution engine test completed!")

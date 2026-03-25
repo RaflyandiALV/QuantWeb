@@ -5,7 +5,7 @@ import {
     BarChart2, Layers
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 // ============================================================
 // % CHANGE CELL — color-coded price change
@@ -348,7 +348,7 @@ const GlobalMarketDashboard = () => {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API_URL}/api/global-market`);
+            const res = await fetch(`${API_BASE}/api/global-market`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const json = await res.json();
             setData(json);
@@ -455,7 +455,7 @@ const GlobalMarketDashboard = () => {
                         borderRadius: '12px', padding: '16px', overflow: 'auto'
                     }}>
                         <div style={{ fontSize: '13px', fontWeight: 700, color: '#9ca3af', marginBottom: '14px', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                            📊 Price Change Heatmap
+                             Price Change Heatmap
                         </div>
 
                         {/* Table Header */}
@@ -492,7 +492,7 @@ const GlobalMarketDashboard = () => {
                                 borderRadius: '12px', padding: '16px'
                             }}>
                                 <div style={{ fontSize: '13px', fontWeight: 700, color: '#9ca3af', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                    💡 Capital Rotation Insights
+                                     Capital Rotation Insights
                                 </div>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {data.insights.map((insight, i) => (

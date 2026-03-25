@@ -5,7 +5,8 @@ import {
   ReferenceLine, Cell, ComposedChart, Scatter, Customized
 } from 'recharts';
 import { Activity, RefreshCw, TrendingUp, TrendingDown, Minus,
-  BarChart3, Zap, DollarSign, Users, AlertTriangle, Clock, Search
+  BarChart3, Zap, DollarSign, Users, AlertTriangle, Clock, Search,
+  Brain, Shield, Target, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -138,6 +139,14 @@ const AIDashboard = () => {
   const [lastUpdated, setLastUpdated] = useState(null);
   const inputRef = useRef(null);
 
+  // AI Decision State
+  const [aiStatus, setAiStatus] = useState(null);
+  const [aiDecision, setAiDecision] = useState(null);
+  const [aiHistory, setAiHistory] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [validationReport, setValidationReport] = useState(null);
+  const [showDecisionLog, setShowDecisionLog] = useState(false);
+
   const fetchMicroData = useCallback(async (symbol, period) => {
     setLoading(true);
     setError(null);
@@ -156,6 +165,31 @@ const AIDashboard = () => {
   }, []);
 
   useEffect(() => { fetchMicroData(selectedSymbol, selectedTimeframe); }, [selectedSymbol, selectedTimeframe, fetchMicroData]);
+
+  // Fetch AI status + history + validation on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/ai/status`).then(r => r.json()).then(setAiStatus).catch(() => {});
+    fetch(`${API_BASE}/api/ai/decisions?limit=20`).then(r => r.json()).then(setAiHistory).catch(() => {});
+    fetch(`${API_BASE}/api/validation/report`).then(r => r.json()).then(setValidationReport).catch(() => {});
+  }, []);
+
+  const handleAIDecision = async () => {
+    setAiLoading(true);
+    try {
+      const sym = selectedSymbol.replace('USDT', '-USDT');
+      const res = await fetch(`${API_BASE}/api/ai-decision/${sym}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setAiDecision(data);
+      // Refresh history
+      const hist = await fetch(`${API_BASE}/api/ai/decisions?limit=20`);
+      setAiHistory(await hist.json());
+    } catch (err) {
+      setAiDecision({ decision: 'ERROR', reasoning: err.message, confidence: 0 });
+    } finally {
+      setAiLoading(false);
+    }
+  };
   useEffect(() => {
     const interval = setInterval(() => fetchMicroData(selectedSymbol, selectedTimeframe), 120000);
     return () => clearInterval(interval);
@@ -244,6 +278,185 @@ const AIDashboard = () => {
               <Clock size={11} /> {lastUpdated.toLocaleTimeString()}
             </span>
           )}
+        </div>
+      </div>
+
+      {/* ══════ AI DECISION PANEL ══════ */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.08))',
+        border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: 14,
+        padding: 20, marginBottom: 20,
+      }}>
+        {/* AI Status Bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Brain size={20} style={{ color: '#8b5cf6' }} />
+            <span style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0' }}>AI Decision Engine</span>
+            {aiStatus && (
+              <span style={{
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                background: aiStatus.mode === 'live' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(234, 179, 8, 0.15)',
+                color: aiStatus.mode === 'live' ? '#22c55e' : '#eab308',
+                border: `1px solid ${aiStatus.mode === 'live' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(234, 179, 8, 0.3)'}`,
+              }}>
+                {aiStatus.mode === 'live' ? ' LIVE' : ' MOCK'} • {aiStatus.model}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {aiStatus && (
+              <span style={{ fontSize: 11, color: '#64748b' }}>
+                {aiStatus.key_count || 0} API keys • {aiStatus.decisions_made || 0} decisions
+              </span>
+            )}
+            <button onClick={handleAIDecision} disabled={aiLoading}
+              style={{
+                padding: '8px 18px', borderRadius: 8, border: 'none', cursor: aiLoading ? 'wait' : 'pointer',
+                fontSize: 13, fontWeight: 700, letterSpacing: 0.5,
+                background: aiLoading ? 'rgba(100, 116, 139, 0.3)' : 'linear-gradient(135deg, #8b5cf6, #6366f1)',
+                color: '#fff', display: 'flex', alignItems: 'center', gap: 6,
+                boxShadow: aiLoading ? 'none' : '0 4px 15px rgba(99, 102, 241, 0.3)',
+                transition: 'all 0.2s ease',
+              }}>
+              <Target size={14} />
+              {aiLoading ? 'Analyzing...' : `Get AI Decision for ${selectedSymbol.replace('USDT', '')}`}
+            </button>
+          </div>
+        </div>
+
+        {/* Decision Card */}
+        {aiDecision && (
+          <div style={{
+            background: 'rgba(15, 23, 42, 0.6)', borderRadius: 12, padding: 16, marginBottom: 16,
+            border: `1px solid ${
+              aiDecision.decision === 'LONG' ? 'rgba(34, 197, 94, 0.3)'
+              : aiDecision.decision === 'SHORT' ? 'rgba(239, 68, 68, 0.3)'
+              : 'rgba(100, 116, 139, 0.3)'
+            }`
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{
+                    fontSize: 18, fontWeight: 800, letterSpacing: 1,
+                    color: aiDecision.decision === 'LONG' ? '#22c55e'
+                         : aiDecision.decision === 'SHORT' ? '#ef4444' : '#eab308'
+                  }}>
+                    {aiDecision.decision === 'LONG' ? '' : aiDecision.decision === 'SHORT' ? '' : ''} {aiDecision.decision}
+                  </span>
+                  <span style={{
+                    padding: '3px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                    background: (aiDecision.confidence || 0) >= 70
+                      ? 'rgba(34, 197, 94, 0.15)'
+                      : (aiDecision.confidence || 0) >= 50
+                        ? 'rgba(234, 179, 8, 0.15)'
+                        : 'rgba(239, 68, 68, 0.15)',
+                    color: (aiDecision.confidence || 0) >= 70 ? '#22c55e'
+                         : (aiDecision.confidence || 0) >= 50 ? '#eab308' : '#ef4444',
+                  }}>
+                    {aiDecision.confidence || 0}% confidence
+                  </span>
+                </div>
+                <p style={{ margin: 0, fontSize: 13, color: '#94a3b8', lineHeight: 1.6 }}>
+                  {aiDecision.reasoning || aiDecision._fallback_reason || 'No reasoning provided'}
+                </p>
+              </div>
+              {(aiDecision.entry || aiDecision.sl || aiDecision.tp) && (
+                <div style={{ display: 'flex', gap: 10 }}>
+                  {[['Entry', aiDecision.entry, '#6366f1'], ['SL', aiDecision.sl, '#ef4444'], ['TP', aiDecision.tp, '#22c55e']].map(([label, val, color]) => (
+                    val ? (
+                      <div key={label} style={{ background: 'rgba(15, 23, 42, 0.8)', borderRadius: 8, padding: '8px 14px', borderTop: `2px solid ${color}` }}>
+                        <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color }}>${Number(val).toLocaleString()}</div>
+                      </div>
+                    ) : null
+                  ))}
+                  {aiDecision.rr && (
+                    <div style={{ background: 'rgba(15, 23, 42, 0.8)', borderRadius: 8, padding: '8px 14px', borderTop: '2px solid #eab308' }}>
+                      <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>R:R</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#eab308' }}>{aiDecision.rr}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Decision Log + Validation Summary */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+          {/* Decision Log */}
+          <div>
+            <button onClick={() => setShowDecisionLog(!showDecisionLog)} style={{
+              background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, marginBottom: 8, padding: 0,
+            }}>
+              {showDecisionLog ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              Decision History ({Array.isArray(aiHistory) ? aiHistory.length : 0})
+            </button>
+            {showDecisionLog && Array.isArray(aiHistory) && aiHistory.length > 0 && (
+              <div style={{ maxHeight: 200, overflowY: 'auto', borderRadius: 8 }}>
+                <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(15, 23, 42, 0.5)' }}>
+                      {['Symbol', 'Decision', 'Conf', 'Mode', 'Time'].map(h => (
+                        <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: '#64748b', fontWeight: 600, borderBottom: '1px solid rgba(100,116,139,0.15)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {aiHistory.slice(0, 20).map((d, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(100,116,139,0.08)' }}>
+                        <td style={{ padding: '5px 10px', color: '#e2e8f0', fontWeight: 600 }}>{d.symbol}</td>
+                        <td style={{ padding: '5px 10px', color: d.decision === 'LONG' ? '#22c55e' : d.decision === 'SHORT' ? '#ef4444' : '#eab308', fontWeight: 700 }}>{d.decision}</td>
+                        <td style={{ padding: '5px 10px', color: '#94a3b8' }}>{d.confidence}%</td>
+                        <td style={{ padding: '5px 10px' }}>
+                          <span style={{ padding: '1px 6px', borderRadius: 4, fontSize: 10, background: d.mode === 'live' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)', color: d.mode === 'live' ? '#22c55e' : '#eab308' }}>{d.mode}</span>
+                        </td>
+                        <td style={{ padding: '5px 10px', color: '#475569', fontSize: 10 }}>{d.timestamp ? new Date(d.timestamp).toLocaleString() : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Validation Summary */}
+          <div style={{ background: 'rgba(15, 23, 42, 0.4)', borderRadius: 10, padding: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <Shield size={14} style={{ color: '#6366f1' }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>Validation Status</span>
+            </div>
+            {validationReport && validationReport.verdict ? (
+              <>
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{
+                    padding: '3px 10px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                    background: validationReport.verdict === 'VALIDATED' ? 'rgba(34,197,94,0.15)'
+                             : validationReport.verdict === 'INSUFFICIENT_DATA' ? 'rgba(100,116,139,0.15)'
+                             : 'rgba(239,68,68,0.15)',
+                    color: validationReport.verdict === 'VALIDATED' ? '#22c55e'
+                         : validationReport.verdict === 'INSUFFICIENT_DATA' ? '#94a3b8' : '#ef4444',
+                  }}>
+                    {validationReport.verdict}
+                  </span>
+                </div>
+                {validationReport.metrics && (
+                  <div style={{ display: 'grid', gap: 4, fontSize: 11 }}>
+                    {Object.entries(validationReport.metrics).slice(0, 5).map(([k, v]) => (
+                      <div key={k} style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8' }}>
+                        <span>{k}</span>
+                        <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p style={{ margin: 0, fontSize: 11, color: '#475569' }}>No validation data yet. Need 200+ decisions.</p>
+            )}
+          </div>
         </div>
       </div>
 

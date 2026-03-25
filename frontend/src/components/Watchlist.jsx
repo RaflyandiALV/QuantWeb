@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Eye, Trash2, Plus, Bell, Activity, TrendingUp, Clock, Settings, Calendar, Sliders, X } from 'lucide-react';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const WATCHLIST_URL = `${API_BASE}/api/watchlist`;
+
 
 const Watchlist = ({ onSelectAsset }) => {
     const [coins, setCoins] = useState([]);
@@ -13,15 +17,9 @@ const Watchlist = ({ onSelectAsset }) => {
     const [timeframe, setTimeframe] = useState("1d");
     const [period, setPeriod] = useState("1y");
 
-    const API_URL = `${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api/watchlist`;
-
-    useEffect(() => {
-        fetchWatchlist();
-    }, []);
-
-    const fetchWatchlist = async () => {
+    const fetchWatchlist = useCallback(async () => {
         try {
-            const res = await fetch(API_URL);
+            const res = await fetch(WATCHLIST_URL);
             if(res.ok) {
                 const data = await res.json();
                 setCoins(data);
@@ -29,7 +27,11 @@ const Watchlist = ({ onSelectAsset }) => {
         } catch (err) {
             console.error("Error fetching watchlist", err);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        fetchWatchlist();
+    }, [fetchWatchlist]);
 
     const addCoin = async () => {
         if (!newCoin) return;
@@ -50,7 +52,7 @@ const Watchlist = ({ onSelectAsset }) => {
                 payload.period = period;
             }
 
-            const res = await fetch(API_URL, {
+            const res = await fetch(WATCHLIST_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -65,7 +67,7 @@ const Watchlist = ({ onSelectAsset }) => {
                 alert(err.detail);
             }
         } catch (err) {
-            alert("Gagal menambah koin");
+            alert("Failed to add coin");
         }
         setLoading(false);
     };
@@ -73,10 +75,10 @@ const Watchlist = ({ onSelectAsset }) => {
     const removeCoin = async (symbol, e) => {
         e.stopPropagation(); 
         try {
-            await fetch(`${API_URL}/${symbol}`, { method: 'DELETE' });
+            await fetch(`${WATCHLIST_URL}/${symbol}`, { method: 'DELETE' });
             fetchWatchlist();
         } catch (err) {
-            alert("Gagal menghapus koin");
+            alert("Failed to remove coin");
         }
     };
 
@@ -124,8 +126,8 @@ const Watchlist = ({ onSelectAsset }) => {
                             <div className="flex flex-col">
                                 <label className="text-gray-400 mb-1">MODE</label>
                                 <select value={mode} onChange={(e) => setMode(e.target.value)} className="bg-black text-white p-1 rounded border border-gray-600 cursor-pointer">
-                                    <option value="AUTO">🤖 AUTO (AI Scan)</option>
-                                    <option value="MANUAL">🛠️ MANUAL (Custom)</option>
+                                    <option value="AUTO"> AUTO (AI Scan)</option>
+                                    <option value="MANUAL">️ MANUAL (Custom)</option>
                                 </select>
                             </div>
 
@@ -177,7 +179,7 @@ const Watchlist = ({ onSelectAsset }) => {
                                 <div className="flex flex-col">
                                     <span className="font-bold text-lg text-gray-200 font-mono group-hover:text-cyan-300 transition leading-none">{coinData.symbol}</span>
                                     <span className={`text-[9px] font-bold mt-1 ${coinData.mode === 'MANUAL' ? 'text-purple-400' : 'text-gray-500'}`}>
-                                        {coinData.mode === 'MANUAL' ? '🛠️ MANUAL' : '🤖 AUTO AI'}
+                                        {coinData.mode === 'MANUAL' ? '️ MANUAL' : ' AUTO AI'}
                                     </span>
                                 </div>
                             </div>
@@ -232,7 +234,7 @@ const Watchlist = ({ onSelectAsset }) => {
                 
                 {coins.length === 0 && (
                     <div className="col-span-full py-8 text-center border-2 border-dashed border-gray-800 rounded-xl">
-                        <p className="text-gray-500 text-sm">Watchlist kosong. Tambahkan koin untuk melihat analisis otomatis.</p>
+                        <p className="text-gray-500 text-sm">Watchlist is empty. Add coins to view automated analysis.</p>
                     </div>
                 )}
             </div>

@@ -212,14 +212,16 @@ def pre_trade_risk_check(engine, symbol, side, qty, price):
         conn = _get_db_conn()
         if conn:
             cursor = conn.cursor()
-            # Count unique symbols with BUY trades that haven't been closed
+            # Count open positions using net quantity per symbol (buy qty - sell qty)
+            # COALESCE(qty, 1) for backward compat with rows that may not have qty set
             cursor.execute("""
-                SELECT COUNT(DISTINCT symbol) FROM trade_log
-                WHERE side = 'buy'
-                AND symbol NOT IN (
-                    SELECT symbol FROM trade_log WHERE side = 'sell'
+                SELECT COUNT(*) FROM (
+                    SELECT symbol,
+                           SUM(CASE WHEN side = 'buy'  THEN COALESCE(qty, 1) ELSE 0 END) -
+                           SUM(CASE WHEN side = 'sell' THEN COALESCE(qty, 1) ELSE 0 END) AS net_qty
+                    FROM trade_log
                     GROUP BY symbol
-                    HAVING COUNT(*) >= (SELECT COUNT(*) FROM trade_log t2 WHERE t2.symbol = trade_log.symbol AND t2.side = 'buy')
+                    HAVING net_qty > 0
                 )
             """)
             open_positions = cursor.fetchone()[0]

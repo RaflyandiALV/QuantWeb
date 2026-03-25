@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Play, Square, RefreshCw, Activity, DollarSign, 
-  TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, AlertTriangle, Crosshair
+  TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, AlertTriangle, Crosshair,
+  Brain, Search, Target, Zap, Pause, ChevronDown, ChevronUp, Terminal
 } from 'lucide-react';
 import axios from 'axios';
 import PaperTradingChart from './PaperTradingChart';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 const PaperTradingDashboard = () => {
   const [status, setStatus] = useState(null);
@@ -13,6 +16,7 @@ const PaperTradingDashboard = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedSymbol, setSelectedSymbol] = useState(null);
+  const [expandedEvent, setExpandedEvent] = useState(null);
 
   // Configuration state
   const [config, setConfig] = useState({
@@ -25,7 +29,7 @@ const PaperTradingDashboard = () => {
 
   const fetchStatus = async () => {
     try {
-      const res = await axios.get('http://127.0.0.1:8000/api/paper-trader/status');
+      const res = await axios.get(`${API_BASE}/api/paper-trader/status`);
       setStatus(res.data);
       setError(null);
     } catch (err) {
@@ -36,7 +40,7 @@ const PaperTradingDashboard = () => {
 
   const fetchTrades = async () => {
     try {
-      const res = await axios.get('http://127.0.0.1:8000/api/paper-trader/trades?limit=50');
+      const res = await axios.get(`${API_BASE}/api/paper-trader/trades?limit=50`);
       setTrades(res.data.trades || []);
     } catch (err) {
       console.error("Failed to fetch trades", err);
@@ -86,13 +90,13 @@ const PaperTradingDashboard = () => {
     try {
       // First configure
       const watchlistArr = config.watchlist.split(',').map(s => s.trim()).filter(s => s);
-      await axios.post('http://127.0.0.1:8000/api/paper-trader/configure', {
+      await axios.post(`${API_BASE}/api/paper-trader/configure`, {
         ...config,
         watchlist: watchlistArr
       });
       
       // Then start
-      await axios.post('http://127.0.0.1:8000/api/paper-trader/start');
+      await axios.post(`${API_BASE}/api/paper-trader/start`);
       await loadAllData();
     } catch (err) {
       setError("Failed to start paper trader");
@@ -104,7 +108,7 @@ const PaperTradingDashboard = () => {
   const handleStop = async () => {
     setActionLoading(true);
     try {
-      await axios.post('http://127.0.0.1:8000/api/paper-trader/stop');
+      await axios.post(`${API_BASE}/api/paper-trader/stop`);
       await loadAllData();
     } catch (err) {
       setError("Failed to stop paper trader");
@@ -116,7 +120,7 @@ const PaperTradingDashboard = () => {
   const handleRunCycle = async () => {
     setActionLoading(true);
     try {
-      await axios.post('http://127.0.0.1:8000/api/paper-trader/cycle');
+      await axios.post(`${API_BASE}/api/paper-trader/cycle`);
       await loadAllData();
     } catch (err) {
       setError("Failed to run cycle manually");
@@ -137,19 +141,30 @@ const PaperTradingDashboard = () => {
   const isRunning = status?.running || false;
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-gray-900 text-white min-h-screen">
+    <div className="animate-in slide-in-from-right-4 fade-in duration-300">
       <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* Header Section */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-800 p-6 rounded-xl border border-gray-700/50 shadow-lg">
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center">
-              <Activity className="w-6 h-6 mr-3 text-orange-500" />
-              Paper Trading Engine
-            </h1>
-            <p className="text-gray-400 mt-1 text-sm">
-              Autonomous AI-driven trading on Binance Futures Testnet
-            </p>
+        {/* Header Section — matched to BotTracker/Operations style */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center" style={{
+          background: 'rgba(30, 41, 59, 0.6)', border: '1px solid rgba(100, 116, 139, 0.2)',
+          borderRadius: 16, padding: '20px 24px'
+        }}>
+          <div className="flex items-center gap-3">
+            <div style={{
+              width: 42, height: 42, borderRadius: 12,
+              background: 'linear-gradient(135deg, #f97316, #ef4444)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>
+              <Activity className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 style={{ fontSize: 20, fontWeight: 800, margin: 0, color: '#f3f4f6' }}>
+                Paper Trading Engine
+              </h2>
+              <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>
+                Autonomous AI-driven paper trading (simulated balance)
+              </p>
+            </div>
           </div>
           
           <div className="flex items-center space-x-4 mt-4 md:mt-0">
@@ -161,10 +176,15 @@ const PaperTradingDashboard = () => {
             <button
               onClick={loadAllData}
               disabled={actionLoading}
-              className="p-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors border border-gray-600 text-gray-300"
-              title="Refresh Data"
+              style={{
+                background: 'rgba(249, 115, 22, 0.15)', border: '1px solid rgba(249, 115, 22, 0.3)',
+                borderRadius: 10, padding: '8px 16px', color: '#f97316',
+                cursor: actionLoading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                fontSize: 13, fontWeight: 600, transition: 'all 0.2s'
+              }}
             >
-              <RefreshCw className={`w-5 h-5 ${actionLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${actionLoading ? 'animate-spin' : ''}`} />
+              {actionLoading ? 'Loading...' : 'Refresh'}
             </button>
           </div>
         </div>
@@ -182,7 +202,7 @@ const PaperTradingDashboard = () => {
           <div className="lg:col-span-1 space-y-6">
             
             {/* Control Panel */}
-            <div className="bg-gray-800 rounded-xl p-6 border border-gray-700/50 shadow-lg">
+            <div style={{ background: 'rgba(30, 41, 59, 0.6)', border: '1px solid rgba(100, 116, 139, 0.2)', borderRadius: 12, padding: '20px' }}>
               <h2 className="text-lg font-bold mb-4 flex items-center">
                 <Crosshair className="w-5 h-5 mr-2 text-blue-400" />
                 Controls
@@ -275,14 +295,14 @@ const PaperTradingDashboard = () => {
                 </div>
                 
                 <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg border border-gray-700/50">
-                  <span className="text-sm font-medium text-gray-300">Target Environment</span>
+                  <span className="text-sm font-medium text-gray-300">Mode</span>
                   <div className="flex bg-gray-800 rounded-lg p-1 border border-gray-700">
                     <button 
                       onClick={() => setConfig({...config, use_testnet: true})}
                       disabled={isRunning}
                       className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${config.use_testnet ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200 disabled:opacity-50'}`}
                     >
-                      Testnet
+                      Simulated
                     </button>
                     <button 
                       onClick={() => setConfig({...config, use_testnet: false})}
@@ -438,6 +458,105 @@ const PaperTradingDashboard = () => {
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-gray-500 p-8">
                     <p>No active positions found.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ══════ LIVE FEED / AI EVENT LOG ══════ */}
+            <div className="bg-gray-800 rounded-xl border border-gray-700/50 shadow-lg overflow-hidden flex flex-col h-[360px]">
+              <div className="p-4 border-b border-gray-700/50 bg-gray-800/80 shrink-0 flex justify-between items-center">
+                <h2 className="text-lg font-bold flex items-center">
+                  <Terminal className="w-5 h-5 mr-2 text-purple-400" />
+                  Live Feed — AI Reasoning
+                </h2>
+                {actionLoading && (
+                  <span className="flex items-center text-xs text-purple-400 animate-pulse">
+                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Processing...
+                  </span>
+                )}
+              </div>
+              <div className="overflow-y-auto flex-1 p-3 space-y-1 font-mono text-xs bg-gray-950/50" style={{scrollbarWidth:'thin'}}>
+                {status?.recent_events && status.recent_events.length > 0 ? (
+                  [...status.recent_events].reverse().map((evt, idx) => {
+                    const typeConfig = {
+                      scan: { icon: Search, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+                      strategy: { icon: Target, color: 'text-yellow-400', bg: 'bg-yellow-500/10' },
+                      decision: { icon: Brain, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                      execute: { icon: Zap, color: 'text-green-400', bg: 'bg-green-500/10' },
+                      hold: { icon: Pause, color: 'text-gray-400', bg: 'bg-gray-500/10' },
+                      error: { icon: AlertTriangle, color: 'text-red-400', bg: 'bg-red-500/10' },
+                    };
+                    const cfg = typeConfig[evt.type] || typeConfig.scan;
+                    const Icon = cfg.icon;
+                    const hasDetail = evt.detail && (evt.detail.reasoning || evt.detail.strategy || evt.detail.side);
+                    const isExpanded = expandedEvent === idx;
+
+                    return (
+                      <div key={idx}>
+                        <div 
+                          className={`flex items-start gap-2 px-2 py-1.5 rounded ${cfg.bg} cursor-pointer hover:brightness-125 transition-all`}
+                          onClick={() => hasDetail && setExpandedEvent(isExpanded ? null : idx)}
+                        >
+                          <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${cfg.color}`} />
+                          <span className="text-gray-500 shrink-0">
+                            {evt.time ? new Date(evt.time).toLocaleTimeString() : ''}
+                          </span>
+                          <span className={`${cfg.color} font-semibold uppercase shrink-0`}>
+                            [{evt.type}]
+                          </span>
+                          <span className="text-gray-300 flex-1">
+                            {evt.message}
+                          </span>
+                          {hasDetail && (
+                            isExpanded 
+                              ? <ChevronUp className="w-3 h-3 text-gray-500 shrink-0 mt-0.5" />
+                              : <ChevronDown className="w-3 h-3 text-gray-500 shrink-0 mt-0.5" />
+                          )}
+                        </div>
+
+                        {/* Expanded Detail */}
+                        {isExpanded && evt.detail && (
+                          <div className="ml-8 mt-1 mb-2 p-3 rounded-lg bg-gray-900/80 border border-gray-700/50 text-xs space-y-1">
+                            {evt.detail.reasoning && (
+                              <div>
+                                <span className="text-purple-400 font-bold"> AI Reasoning:</span>
+                                <p className="text-gray-300 mt-1 leading-relaxed whitespace-pre-wrap">{evt.detail.reasoning}</p>
+                              </div>
+                            )}
+                            <div className="flex gap-4 flex-wrap mt-2">
+                              {evt.detail.strategy && (
+                                <span className="text-yellow-400">Strategy: <strong>{evt.detail.strategy}</strong></span>
+                              )}
+                              {evt.detail.confidence !== undefined && (
+                                <span className={evt.detail.confidence >= 60 ? 'text-green-400' : 'text-orange-400'}>
+                                  Confidence: <strong>{evt.detail.confidence}%</strong>
+                                </span>
+                              )}
+                              {evt.detail.price && (
+                                <span className="text-gray-400">Price: <strong>${Number(evt.detail.price).toLocaleString()}</strong></span>
+                              )}
+                              {evt.detail.side && (
+                                <span className={evt.detail.side === 'LONG' ? 'text-green-400' : 'text-red-400'}>
+                                  Side: <strong>{evt.detail.side}</strong>
+                                </span>
+                              )}
+                              {evt.detail.sl && (
+                                <span className="text-red-400">SL: <strong>${Number(evt.detail.sl).toLocaleString()}</strong></span>
+                              )}
+                              {evt.detail.tp && (
+                                <span className="text-green-400">TP: <strong>${Number(evt.detail.tp).toLocaleString()}</strong></span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-gray-600 p-8">
+                    <Terminal className="w-8 h-8 mb-2 opacity-30" />
+                    <p>No events yet. Start the bot or run a cycle to see AI reasoning here.</p>
                   </div>
                 )}
               </div>

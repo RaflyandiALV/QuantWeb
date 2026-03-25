@@ -77,7 +77,7 @@ const MarketAnalytics = ({ data }) => {
             <div className="bg-gray-800/50 backdrop-blur-md p-6 rounded-3xl border border-gray-700 shadow-xl">
                 <div className="mb-6 border-b border-gray-700 pb-4">
                     <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                        🧭 Market Condition Radar
+                         Market Condition Radar
                         <span className="text-xs text-cyan-400 font-mono py-1 px-2 bg-cyan-900/30 rounded border border-cyan-500/30">
                             ALGORITHM: SMA Crossover
                         </span>
@@ -113,7 +113,7 @@ const MarketAnalytics = ({ data }) => {
                 <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center">
                     <div>
                         <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                            🍝 Spaghetti Chart: Relative Performance
+                             Spaghetti Chart: Relative Performance
                         </h3>
                         <p className="text-gray-400 text-sm mt-1">
                             Membandingkan kekuatan tren semua koin dimulai dari titik yang sama (0%).
@@ -230,7 +230,7 @@ const MarketAnalytics = ({ data }) => {
                 {/* VOLATILITY COMPARISON */}
                 <div className="bg-gray-800/50 backdrop-blur-md p-6 rounded-3xl border border-gray-700 shadow-xl">
                     <div className="mb-4">
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2">⚡ Annualized Volatility</h3>
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2"> Annualized Volatility</h3>
                         <p className="text-gray-400 text-xs mt-1 leading-relaxed">
                             Mengukur fluktuasi harga tahunan.
                             <br /><span className="text-green-400 font-bold">Rendah</span> = Stabil/Safe Haven.
@@ -257,7 +257,7 @@ const MarketAnalytics = ({ data }) => {
                 {/* RETURN DISTRIBUTION */}
                 <div className="bg-gray-800/50 backdrop-blur-md p-6 rounded-3xl border border-gray-700 shadow-xl">
                     <div className="mb-4">
-                        <h3 className="text-lg font-bold text-white flex items-center gap-2">📊 Daily Return Histogram</h3>
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2"> Daily Return Histogram</h3>
                         <p className="text-gray-400 text-xs mt-1 leading-relaxed">
                             Frekuensi kenaikan/penurunan harga harian.
                             <br /><span className="text-gray-300">Analisa:</span> Grafik condong ke kanan (Hijau) menandakan tren Bullish yang sehat.

@@ -5,8 +5,23 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 import sqlite3 # Menggunakan SQLite sesuai request untuk kecepatan lokal
-from psycopg2.extras import execute_values # Tidak dipakai lagi, diganti sqlite3
 from dotenv import load_dotenv
+
+# ============================================================
+# ANNUALIZATION CONSTANTS (bars per year per timeframe)
+# ============================================================
+BARS_PER_YEAR = {
+    "15m": 252 * 96,   # 24192 bars/year
+    "1h":  252 * 24,   # 6048 bars/year
+    "4h":  252 * 6,    # 1512 bars/year
+    "1d":  252,        # 252 bars/year (standard)
+    "1w":  52,         # 52 bars/year
+}
+
+# Trading Cost Model (Binance Taker + Market Slippage)
+TAKER_FEE      = 0.001    # 0.1% per side
+SLIPPAGE       = 0.0005   # 0.05% estimated market slippage
+ROUND_TRIP_COST = TAKER_FEE + SLIPPAGE  # applied per transaction side
 
 # Load environment variables
 load_dotenv()
@@ -53,7 +68,7 @@ class TradingEngine:
             self._init_db()
 
         except Exception as e:
-            print(f"❌ [CORE] Init Error: {e}")
+            print(f"[ERROR] [CORE] Init Error: {e}")
 
     # ============================================================
     # 1. DATABASE MANAGER (SQLITE LOCAL IMPLEMENTATION)
@@ -71,7 +86,7 @@ class TradingEngine:
             conn.execute("PRAGMA busy_timeout=30000")
             return conn
         except Exception as e:
-            print(f"❌ DB Connection Error: {e}")
+            print(f"[ERROR] DB Connection Error: {e}")
             return None
 
     def _init_db(self):
@@ -146,8 +161,8 @@ class TradingEngine:
 
     def _get_last_timestamp(self, symbol, timeframe):
         """
-        Mengambil timestamp dari data candle terakhir yang tersimpan di DB.
-        Digunakan untuk menentukan titik mulai download (Incremental Fetch).
+        Fetch timestamp of the latest candle stored in DB.
+        Used to determine the starting point for download (Incremental Fetch).
         """
         conn = self._get_db_conn()
         if not conn: return None
@@ -165,8 +180,8 @@ class TradingEngine:
 
     def _save_to_db(self, symbol, timeframe, ohlcv_data):
         """
-        Menyimpan data candle baru ke database lokal.
-        Menggunakan 'INSERT OR IGNORE' untuk menangani duplikasi.
+        Save new candle data to local database.
+        Uses 'INSERT OR IGNORE' to handle duplicates.
         """
         conn = self._get_db_conn()
         if not conn: return
@@ -174,11 +189,11 @@ class TradingEngine:
         try:
             cursor = conn.cursor()
             
-            # Format data sesuai struktur tabel
-            # ohlcv dari ccxt: [timestamp, open, high, low, close, volume]
+            # Format data according to table structure
+            # ccxt ohlcv: [timestamp, open, high, low, close, volume]
             records = [(symbol, timeframe, row[0], row[1], row[2], row[3], row[4], row[5]) for row in ohlcv_data]
             
-            # Eksekusi Batch Insert (Sangat Cepat di SQLite)
+            # Execute Batch Insert (Very fast in SQLite)
             cursor.executemany("""
                 INSERT OR IGNORE INTO market_data (symbol, timeframe, timestamp, open, high, low, close, volume)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -192,7 +207,7 @@ class TradingEngine:
 
     def _load_from_db(self, symbol, timeframe, requested_period):
         """
-        Mengambil data historis dari database lokal untuk keperluan analisis/backtest.
+        Fetch historical data from local database for analysis/backtest.
         """
         conn = self._get_db_conn()
         if not conn: return None
@@ -206,6 +221,8 @@ class TradingEngine:
             
             if requested_period == "1mo": 
                 cutoff_ts = now_ts - (30 * ms_day)
+            elif requested_period == "3mo": 
+                cutoff_ts = now_ts - (90 * ms_day)
             elif requested_period == "6mo": 
                 cutoff_ts = now_ts - (180 * ms_day)
             elif requested_period == "1y": 
@@ -214,11 +231,13 @@ class TradingEngine:
                 cutoff_ts = now_ts - (730 * ms_day)
             elif requested_period == "max": 
                 cutoff_ts = 0 # Ambil semua data dari awal
+            else:
+                cutoff_ts = 0 # Fallback: ambil semua data
             
             # Query Select Data
             query = "SELECT timestamp, open, high, low, close, volume FROM market_data WHERE symbol=? AND timeframe=? AND timestamp >= ? ORDER BY timestamp ASC"
             
-            # Menggunakan Pandas read_sql untuk langsung jadi DataFrame
+            # Use Pandas read_sql for direct DataFrame conversion
             df = pd.read_sql_query(query, conn, params=(symbol, timeframe, cutoff_ts))
             return df
             
@@ -228,7 +247,7 @@ class TradingEngine:
 
     def _clear_db_data(self, symbol, timeframe):
         """
-        Menghapus data spesifik dari database (Digunakan untuk Force Reload / Reset).
+        Delete specific data from database (Used for Force Reload / Reset).
         """
         conn = self._get_db_conn()
         if not conn: return
@@ -302,7 +321,7 @@ class TradingEngine:
             }
             
         except Exception as e:
-            print(f"⚠️ Cache Read Error: {e}")
+            print(f"[WARN] Cache Read Error: {e}")
             return None
 
     def _save_cache_result(self, symbol, timeframe, period, strategy, metrics, signal_data=None, rr_ratio="N/A"):
@@ -350,7 +369,7 @@ class TradingEngine:
             conn.close()
             
         except Exception as e:
-            print(f"⚠️ Cache Write Error: {e}")
+            print(f"[WARN] Cache Write Error: {e}")
 
     # ============================================================
     # HELPER: TIME INTERVAL CONVERSION
@@ -365,7 +384,7 @@ class TradingEngine:
         if interval == '1h': return 3600000
         if interval == '4h': return 14400000
         if interval == '1d': return 86400000
-        if interval == '1w': return 604800000
+        if interval in ('1w', '1wk'): return 604800000
         return 3600000 # Default 1 jam
 
     # ============================================================
@@ -381,6 +400,10 @@ class TradingEngine:
         4. Simpan selisih ke DB, lalu load full data.
         """
         try:
+            # Standardisasi interval untuk CCXT (1wk -> 1w)
+            if interval == '1wk':
+                interval = '1w'
+            
             # Standardisasi Simbol untuk CCXT (BTC-USD -> BTC/USDT)
             symbol_ccxt = symbol.upper().replace("-", "/")
             if symbol_ccxt.endswith("/USD"):
@@ -388,7 +411,7 @@ class TradingEngine:
             
             # --- FORCE RELOAD CHECK ---
             if force_reload:
-                print(f"🔄 [DATA] Force Reloading {symbol}...")
+                print(f"[DATA] Force Reloading {symbol}...")
                 self._clear_db_data(symbol, interval)
 
             # Cek Timestamp Terakhir di DB
@@ -400,9 +423,10 @@ class TradingEngine:
                 # Jika ada data, set titik mulai download dari (Last TS + 1 ms)
                 since = last_ts + 1
             else:
-                # Jika DB kosong, set titik mulai dari 2 tahun lalu (Seed Data)
-                since = now - (730 * 24 * 60 * 60 * 1000) 
-                print(f"📥 [DATA] Initial Download {symbol}...")
+                # Jika DB kosong, set titik mulai dari 3 tahun lalu (Seed Data)
+                # 3 tahun = cukup untuk 2y backtest + 200+ candle warmup indikator
+                since = now - (1095 * 24 * 60 * 60 * 1000) 
+                print(f"[DATA] Initial Download {symbol}...")
 
             # --- SMART LOGIC: DYNAMIC FETCH INTERVAL ---
             # Tentukan apakah perlu fetch ke API atau tidak
@@ -425,7 +449,9 @@ class TradingEngine:
             limit = 1000
             
             if should_fetch:
-                # print(f"⚡ [DATA] Updating {symbol} via API...")
+                print(f"[DATA] Fetching {symbol} {interval} from API (since={since})...")
+                retry_count = 0
+                max_retries = 3
                 while True:
                     try:
                         ohlcv = self.exchange.fetch_ohlcv(symbol_ccxt, timeframe=interval, since=since, limit=limit)
@@ -433,6 +459,7 @@ class TradingEngine:
                         if not ohlcv: break
                         
                         new_ohlcv.extend(ohlcv)
+                        retry_count = 0  # Reset retry on success
                         
                         # Update pointer 'since'
                         last_fetched = ohlcv[-1][0]
@@ -443,11 +470,15 @@ class TradingEngine:
                         if len(new_ohlcv) > 50000: break # Safety limit
                         
                     except Exception as e:
-                        print(f"⚠️ API Fetch Error: {e}")
-                        break
+                        retry_count += 1
+                        if retry_count >= max_retries:
+                            print(f"[DATA] Max retries reached for {symbol}: {e}")
+                            break
+                        print(f"[DATA] API Retry {retry_count}/{max_retries} for {symbol}: {e}")
+                        import time as _time
+                        _time.sleep(1)  # Wait 1s before retry
+                print(f"[DATA] Downloaded {len(new_ohlcv)} new candles for {symbol} {interval}")
             else:
-                # Jika data masih baru, skip fetch (Hemat waktu & kuota)
-                # print(f"✅ [DATA] {symbol} is up to date (Local Cache Hit).")
                 pass
 
             # Simpan Data Baru ke Database
@@ -458,7 +489,7 @@ class TradingEngine:
             df = self._load_from_db(symbol, interval, requested_period)
             
             if df is None or df.empty:
-                # print(f"❌ No data found for {symbol}")
+                # print(f"[ERROR] No data found for {symbol}")
                 return None
 
             # Formatting DataFrame
@@ -470,11 +501,13 @@ class TradingEngine:
             
             # Sort dan Reset Index
             df = df.sort_values('time').reset_index(drop=True)
+            
+            print(f"[DATA] {symbol} {interval}: Returning {len(df)} candles (period={requested_period}, range={df.iloc[0]['time']} to {df.iloc[-1]['time']})")
 
             return df
 
         except Exception as e:
-            print(f"❌ Critical Data Error {symbol}: {e}")
+            print(f"[ERROR] Critical Data Error {symbol}: {e}")
             return None
 
     # ============================================================
@@ -518,12 +551,14 @@ class TradingEngine:
         true_range = np.max(ranges, axis=1)
         df['atr'] = true_range.rolling(14).mean()
 
-        df.fillna(0, inplace=True)
+        # TIDAK menggunakan fillna(0) — biarkan NaN tetap NaN.
+        # Indikator membutuhkan warmup period alami (SMA-50: 50 candle, EMA-200: 200 candle).
+        # Candle yang belum valid akan di-skip oleh NaN guard di run_backtest().
         return df
 
     def get_market_condition(self, df, detailed=False):
         """
-        Menentukan kondisi pasar: UPTREND, DOWNTREND, atau RANGING.
+        Determine market condition: UPTREND, DOWNTREND, or RANGING.
         Enhanced version: EMA200 + RSI + trend strength.
         
         Args:
@@ -539,11 +574,11 @@ class TradingEngine:
             "details": {}
         }
         
-        # Cek ketersediaan data
+        # Check data availability
         if df is None or len(df) < 50:
             return result if detailed else "UNKNOWN"
         
-        # Pastikan indikator sudah dihitung
+        # Ensure indicators are calculated
         required_cols = ['sma_fast', 'sma_slow', 'close']
         if not all(col in df.columns for col in required_cols):
             return result if detailed else "UNKNOWN"
@@ -675,7 +710,7 @@ class TradingEngine:
     # ============================================================
     # 5. BACKTESTING ENGINE (UPDATED: PORTO & RISK MM IMPLEMENTATION)
     # ============================================================
-    def run_backtest(self, raw_df, strategy_type, requested_period="1y", start_date=None, end_date=None, direction="LONG"):
+    def run_backtest(self, raw_df, strategy_type, requested_period="1y", start_date=None, end_date=None, direction="LONG", interval="1d"):
         """
         Menjalankan simulasi trading dengan opsi Risk Management (Kelompok B).
         Args:
@@ -687,55 +722,69 @@ class TradingEngine:
         # 2. Potong Data sesuai periode yang diminta
         df = self.slice_data_by_period(full_df, requested_period, start_date, end_date)
         
-        # --- INISIALISASI AKUN ---
-        capital = self.initial_capital        # Uang Tunai (Cash)
-        initial_capital = self.initial_capital # Modal Awal (untuk patokan)
-        peak_capital = capital                 # Nilai Tertinggi Portofolio (untuk High Watermark)
+        print(f"[BACKTEST] {strategy_type} | raw={len(raw_df)} candles | indicators={len(full_df)} | sliced({requested_period})={len(df)} candles | capital={self.initial_capital}")
         
-        position_size = 0  # Jumlah Koin yang dipegang
-        entry_price = 0    # Harga beli rata-rata
+        # --- ACCOUNT INITIALIZATION ---
+        capital = self.initial_capital        # Cash
+        initial_capital = self.initial_capital # Starting Capital (for reference)
+        peak_capital = capital                 # Peak Portfolio Value (for High Watermark)
         
-        markers = []       # Penanda di Chart (Panah Buy/Sell)
-        trades = []        # Riwayat Trade
-        equity_curve = []  # Grafik Pertumbuhan Saldo
+        position_size = 0  # Number of Coins held
+        entry_price = 0    # Average buy price
         
-        # --- KONFIGURASI RISK MANAGEMENT (MODUL PORTO & RISK MM) ---
-        # Default: Matikan Risk Module (Untuk Strategi Kelompok A / Basic)
+        markers = []       # Chart Markers (Buy/Sell arrows)
+        trades = []        # Trade History
+        equity_curve = []  # Balance Growth Chart
+        
+        # --- RISK MANAGEMENT CONFIGURATION (PORTO & RISK MM) ---
+        # Default: Disable Risk Module (For Basic Strategies / Group A)
         use_risk_mm = False
-        max_porto_dd = 1.0  # 100% (Unlimited / Kebal Margin Call)
+        max_porto_dd = 1.0  # 100% (Unlimited / Immune to Margin Call)
         risk_per_trade = 1.0 # 100% (All In - High Risk)
 
-        # Deteksi Strategi Kelompok B (_PRO)
+        # Detect Group B Strategies (_PRO)
         base_strategy = strategy_type
         if "_PRO" in strategy_type:
             use_risk_mm = True
-            base_strategy = strategy_type.replace("_PRO", "") # Ambil nama strategi dasarnya
+            base_strategy = strategy_type.replace("_PRO", "") # Get base strategy name
             
             # 1. RISK PER TRADE (Kelly Criterion Simplification)
-            # Kita meresikokan 2% dari modal per trade (Standar Konservatif)
+            # We risk 2% of capital per trade (Conservative Standard)
             risk_per_trade = 0.02 
             
-            # 2. MAX PORTOFOLIO DRAWDOWN (Spesifik per Strategi - Sesuai Request)
+            # 2. MAX PORTFOLIO DRAWDOWN (Specific per Strategy - As Requested)
             if base_strategy == "MEAN_REVERSAL":
-                max_porto_dd = 0.30  # Max Drawdown 30% (Stop Total jika rugi 30%)
+                max_porto_dd = 0.30  # Max Drawdown 30% (Stop Total if lost 30%)
             elif base_strategy == "GRID":
-                max_porto_dd = 0.50  # Grid butuh nafas 50%
+                max_porto_dd = 0.50  # Grid needs 50% breathing room
             elif base_strategy == "MOMENTUM":
-                max_porto_dd = 0.20  # Momentum harus ketat 20%
+                max_porto_dd = 0.20  # Momentum must be strict 20%
             elif base_strategy == "MULTITIMEFRAME":
-                max_porto_dd = 0.25  # MultiTF moderat 25%
+                max_porto_dd = 0.25  # MultiTF moderate 25%
             elif base_strategy == "MIX_STRATEGY":
-                max_porto_dd = 0.25  # MIX_STRATEGY PRO moderat 25%
+                max_porto_dd = 0.25  # MIX_STRATEGY PRO moderate 25%
 
-        # Validasi Data
+        # Data Validation
         if df.empty or len(df) < 5:
             return df, [], self.calculate_metrics([], capital, 0, capital, []), []
 
         start_price = df.iloc[0]['close']
         df = df.reset_index(drop=True)
-        is_blown_up = False  # Status apakah akun sudah "Jebol" (Kena Limit Drawdown)
+        is_blown_up = False  # Status if account is "Blown Up" (Hit Drawdown Limit)
 
-        # --- LOOP SIMULASI BAR-BY-BAR ---
+        # --- PRE-COMPUTE MIX_STRATEGY MARKET CONDITIONS (O(n) not O(n²)) ---
+        # get_market_condition(df.iloc[:i+1]) is O(n) — calling it per bar = O(n²).
+        # Pre-compute once here, then use market_conditions[i] inside the loop.
+        base_strat_check = strategy_type.replace("_PRO", "")
+        if base_strat_check == "MIX_STRATEGY":
+            market_conditions = [
+                self.get_market_condition(df.iloc[:idx+1])
+                for idx in range(len(df))
+            ]
+        else:
+            market_conditions = None
+
+        # --- BAR-BY-BAR SIMULATION LOOP ---
         for i in range(1, len(df)):
             curr = df.iloc[i]
             prev = df.iloc[i-1]
@@ -776,7 +825,16 @@ class TradingEngine:
             # Jika akun sudah mati, catat equity flat dan skip logic trading
             if is_blown_up:
                 equity_curve.append({'time': ts, 'value': capital})
-                continue 
+                continue
+
+            # GUARD: Skip candle jika indikator utama belum valid (warmup period)
+            # SMA-50 butuh 50 candle, RSI butuh 14+1, ATR butuh 14+1 candle.
+            if pd.isna(curr.get('sma_fast')) or pd.isna(curr.get('sma_slow')) or \
+               pd.isna(curr.get('rsi')) or pd.isna(curr.get('bb_upper')) or \
+               pd.isna(curr.get('atr')):
+                equity_val = capital + (position_size * curr['close']) if position_size != 0 else capital
+                equity_curve.append({'time': ts, 'value': equity_val})
+                continue
 
             # --- STRATEGY SIGNAL GENERATOR ---
             signal = "HOLD"
@@ -804,7 +862,7 @@ class TradingEngine:
                     elif curr['rsi'] > 75: signal = "SELL"
                 
                 elif base_strategy == "MIX_STRATEGY":
-                    cond = self.get_market_condition(df.iloc[:i+1])
+                    cond = market_conditions[i] if market_conditions else "RANGING"
                     if cond == "UPTREND": # Momentum Logic
                         if prev['sma_fast'] < prev['sma_slow'] and curr['sma_fast'] > curr['sma_slow']: signal = "BUY"
                         elif prev['sma_fast'] > prev['sma_slow'] and curr['sma_fast'] < curr['sma_slow']: signal = "SELL"
@@ -839,7 +897,7 @@ class TradingEngine:
                     elif curr['rsi'] < 25: signal = "EXIT_SHORT"
                 
                 elif base_strategy == "MIX_STRATEGY":
-                    cond = self.get_market_condition(df.iloc[:i+1])
+                    cond = market_conditions[i] if market_conditions else "RANGING"
                     if cond == "DOWNTREND":
                          # Momentum Short inside Downtrend
                          if prev['sma_fast'] > prev['sma_slow'] and curr['sma_fast'] < curr['sma_slow']: signal = "ENTRY_SHORT"
@@ -864,18 +922,24 @@ class TradingEngine:
                             position_value = risk_amount / (sl_dist / curr['close'])
                             position_value = min(position_value, capital)
                         else: position_value = capital
-                        position_size = position_value / curr['close']
-                        capital -= position_value
                     else:
-                        position_size = capital / curr['close']
-                        capital = 0 
-                    
+                        position_value = capital
+
+                    # Kurangi biaya entry (taker fee + slippage)
+                    entry_cost = position_value * ROUND_TRIP_COST
+                    actual_invest = position_value - entry_cost
+                    position_size = actual_invest / curr['close']
+                    capital -= position_value  # Deduct full amount including cost
+
                     entry_price = curr['close']
                     markers.append({'time': ts, 'position': 'belowBar', 'color': '#00ff41', 'shape': 'arrowUp', 'text': 'BUY'})
 
                 # SELL logic
                 elif signal == "SELL" and position_size > 0:
-                    sell_value = position_size * curr['close']
+                    sell_gross = position_size * curr['close']
+                    # Kurangi biaya exit (taker fee + slippage)
+                    exit_cost = sell_gross * ROUND_TRIP_COST
+                    sell_value = sell_gross - exit_cost
                     capital += sell_value
                     pnl = (curr['close'] - entry_price) / entry_price
                     trades.append({'pnl_pct': pnl, 'reason': 'SIGNAL'})
@@ -887,7 +951,6 @@ class TradingEngine:
                 # ENTRY SHORT (Sell to Open)
                 if signal == "ENTRY_SHORT" and position_size == 0:
                     # Logic: We treat capital as collateral.
-                    # We open a short position with value <= capital.
                     if use_risk_mm:
                          atr = curr.get('atr', curr['close']*0.02)
                          sl_dist = atr * 1.5
@@ -899,10 +962,12 @@ class TradingEngine:
                          size_to_short = position_value / curr['close']
                     else:
                          size_to_short = capital / curr['close']
-                    
-                    position_size = -size_to_short # Negative size marks Short
-                    # Cash increases by proceed from short sale (Simulated)
-                    capital += (size_to_short * curr['close']) 
+
+                    position_size = -size_to_short
+                    # Proceed dari short sale dikurangi entry cost
+                    short_proceed = size_to_short * curr['close']
+                    entry_cost = short_proceed * ROUND_TRIP_COST
+                    capital += (short_proceed - entry_cost)
                     entry_price = curr['close']
                     markers.append({'time': ts, 'position': 'aboveBar', 'color': '#ff0055', 'shape': 'arrowDown', 'text': 'SHORT'})
 
@@ -910,11 +975,13 @@ class TradingEngine:
                 elif signal == "EXIT_SHORT" and position_size < 0:
                      size_to_cover = abs(position_size)
                      cost_to_cover = size_to_cover * curr['close']
-                     capital -= cost_to_cover # Pay cash to cover
-                     
-                     pnl = (entry_price - curr['close']) / entry_price # Short PnL logic
+                     # Tambahkan exit cost (taker fee + slippage)
+                     exit_cost = cost_to_cover * ROUND_TRIP_COST
+                     capital -= (cost_to_cover + exit_cost)
+
+                     pnl = (entry_price - curr['close']) / entry_price
                      trades.append({'pnl_pct': pnl, 'reason': 'SIGNAL'})
-                     
+
                      position_size = 0
                      markers.append({'time': ts, 'position': 'belowBar', 'color': '#00ff41', 'shape': 'arrowUp', 'text': 'COVER'})
             
@@ -931,7 +998,7 @@ class TradingEngine:
             bh_return = ((df.iloc[-1]['close'] - start_price) / start_price) * 100
             bh_final = self.initial_capital * (1 + (bh_return / 100))
 
-        metrics = self.calculate_metrics(trades, final_equity, bh_return, bh_final, equity_curve)
+        metrics = self.calculate_metrics(trades, final_equity, bh_return, bh_final, equity_curve, timeframe=interval)
         
         # Tambahkan Info Drawdown Limit ke Metrics agar Frontend Tahu
         metrics['max_porto_limit'] = f"{max_porto_dd*100}%" if use_risk_mm else "Unlimited"
@@ -1025,13 +1092,19 @@ class TradingEngine:
             "pnl_short": round(short_metrics.get('net_profit', 0), 2)
         }
 
-    def calculate_metrics(self, trades, final, bh_ret, bh_fin, curve):
-        """Menghitung performa trading (Win Rate, Drawdown, dll)"""
+    def calculate_metrics(self, trades, final, bh_ret, bh_fin, curve, timeframe="1d"):
+        """Menghitung performa trading (Win Rate, Drawdown, Sharpe, dll)"""
         total_trades = len(trades)
         wins = [t for t in trades if t['pnl_pct'] > 0]
+        losses = [t for t in trades if t['pnl_pct'] <= 0]
         win_rate = (len(wins) / total_trades * 100) if total_trades > 0 else 0
         net_profit = final - self.initial_capital
-        
+
+        # Profit Factor
+        gross_profit = sum(t['pnl_pct'] for t in wins)
+        gross_loss   = abs(sum(t['pnl_pct'] for t in losses))
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0.0
+
         # Max Drawdown
         vals = [e['value'] for e in curve]
         dd = 0
@@ -1039,23 +1112,26 @@ class TradingEngine:
             peak = vals[0]
             for v in vals:
                 if v > peak: peak = v
-                d = (peak - v)/peak
-                if d > dd: dd = d
-        
-        # Sharpe Ratio
+                if peak > 0:
+                    d = (peak - v)/peak
+                    if d > dd: dd = d
+
+        # Sharpe Ratio — timeframe-aware annualization
         sharpe = 0
         if len(vals) > 1:
             series = pd.Series(vals)
             returns = series.pct_change().dropna()
             if returns.std() != 0:
-                sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
+                annualization = BARS_PER_YEAR.get(timeframe, 252)
+                sharpe = (returns.mean() / returns.std()) * np.sqrt(annualization)
 
-        # Calmar Ratio (Annualized Return / Max Drawdown)
+        # Calmar Ratio — also timeframe-aware
         calmar = 0
         if len(vals) > 1 and dd > 0:
             total_return = (final / self.initial_capital) - 1
-            trading_days = len(vals)
-            annual_return = total_return * (252 / max(trading_days, 1))
+            trading_bars = len(vals)
+            annualization = BARS_PER_YEAR.get(timeframe, 252)
+            annual_return = total_return * (annualization / max(trading_bars, 1))
             calmar = annual_return / dd if dd > 0 else 0
 
         return {
@@ -1067,7 +1143,8 @@ class TradingEngine:
             "buy_hold_return": round(bh_ret, 2),
             "max_drawdown": round(dd*100, 2),
             "sharpe_ratio": round(sharpe, 2),
-            "calmar_ratio": round(calmar, 2)
+            "calmar_ratio": round(calmar, 2),
+            "profit_factor": profit_factor,
         }
 
     # ============================================================
@@ -1076,7 +1153,7 @@ class TradingEngine:
     def calculate_position_size(self, symbol, entry, sl, risk_per_trade_pct=0.01):
         """Menghitung ukuran posisi berdasarkan resiko (Risk Management)"""
         if self.auth_mode not in ["TESTNET", "REAL"]:
-            print("⚠️ Cannot calc size: Auth Mode is PUBLIC")
+            print("[WARN] Cannot calc size: Auth Mode is PUBLIC")
             return 0
 
         try:
@@ -1096,10 +1173,10 @@ class TradingEngine:
             sym = symbol.replace("-", "/")
             if sym.endswith("USD"): sym += "T"
             order = self.exchange.create_order(sym, 'market', side, amount)
-            print(f"✅ [{'🧪 TESTNET' if self.auth_mode == 'TESTNET' else '💰 REAL'}] Order {side.upper()} {amount:.6f} {sym} — ID: {order.get('id', 'N/A')}")
+            print(f"[OK] [{'🧪 TESTNET' if self.auth_mode == 'TESTNET' else '💰 REAL'}] Order {side.upper()} {amount:.6f} {sym} — ID: {order.get('id', 'N/A')}")
             return order
         except Exception as e: 
-            print(f"❌ Exec Error: {e}")
+            print(f"[ERROR] Exec Error: {e}")
             return None
 
     def _log_trade(self, symbol, side, qty, price, strategy='', timeframe='', order_id='', status='FILLED', pnl=0, notes=''):
@@ -1115,7 +1192,7 @@ class TradingEngine:
             """, (datetime.now(), symbol, side, qty, price, strategy, timeframe, order_id, status, pnl, notes))
             conn.commit()
         except Exception as e:
-            print(f"❌ [DB ERROR] Log Trade Failed: {e}")
+            print(f"[ERROR] [DB ERROR] Log Trade Failed: {e}")
         finally:
             conn.close()
 
@@ -1238,7 +1315,7 @@ class TradingEngine:
             columns = ['id', 'symbol', 'side', 'qty', 'price', 'strategy', 'timeframe', 'order_id', 'status', 'pnl', 'notes', 'created_at']
             return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
-            print(f"⚠️ Trade History Error: {e}")
+            print(f"[WARN] Trade History Error: {e}")
             return []
 
     def _get_bot_status(self):
@@ -1286,5 +1363,5 @@ class TradingEngine:
                 "mode": self.auth_mode
             }
         except Exception as e:
-            print(f"⚠️ Bot Status Error: {e}")
+            print(f"[WARN] Bot Status Error: {e}")
             return {}

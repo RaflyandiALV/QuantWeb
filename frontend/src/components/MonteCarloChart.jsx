@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { Activity, Play, ShieldAlert, BarChart3, Info } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 const MonteCarloChart = ({ symbol, capital, strategy, period, timeframe }) => {
     const [loading, setLoading] = useState(false);
@@ -13,7 +13,7 @@ const MonteCarloChart = ({ symbol, capital, strategy, period, timeframe }) => {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API_URL}/api/monte-carlo`, {
+            const res = await fetch(`${API_BASE}/api/monte-carlo`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbol, capital, strategy, period, timeframe })

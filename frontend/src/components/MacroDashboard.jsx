@@ -4,7 +4,8 @@ import {
     RefreshCw, Minus, BarChart2, Target, Layers, Zap, ChevronRight
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 
 // ============================================================
 // REGIME BADGE COMPONENT
@@ -124,7 +125,7 @@ const ConditionsChecklist = ({ title, conditions, color }) => {
                     padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.04)'
                 }}>
                     <span style={{ color: met ? '#10b981' : '#ef4444', fontSize: '14px' }}>
-                        {met ? '✅' : '❌'}
+                        {met ? '' : ''}
                     </span>
                     <span style={{ fontSize: '13px', color: met ? '#d1d5db' : '#6b7280', fontFamily: 'monospace' }}>
                         {key.replace(/_/g, ' ').toUpperCase()}
@@ -182,7 +183,7 @@ const MacroDashboard = () => {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API_URL}/api/macro-intelligence`);
+            const res = await fetch(`${API_BASE}/api/macro-intelligence`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const json = await res.json();
             setData(json);

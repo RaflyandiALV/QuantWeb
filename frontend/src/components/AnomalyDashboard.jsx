@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Radar, Activity, Zap, Search, RefreshCw, AlertTriangle, TrendingUp, TrendingDown, BarChart3, Clock, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 
 // Anomaly type config
 const ANOMALY_TYPES = [
@@ -84,7 +85,7 @@ const AnomalyDashboard = () => {
         setError(null);
         setResults(null);
         try {
-            const res = await fetch(`${API_URL}/api/anomaly-scan?symbol=${encodeURIComponent(targetSymbol)}`);
+            const res = await fetch(`${API_BASE}/api/anomaly-scan?symbol=${encodeURIComponent(targetSymbol)}`);
             if (!res.ok) throw new Error(`Scan failed: ${res.status}`);
             const data = await res.json();
             setResults(data);
@@ -118,7 +119,7 @@ const AnomalyDashboard = () => {
         setBatchScanning(true);
         setBatchResults(null);
         try {
-            const res = await fetch(`${API_URL}/api/batch-anomaly-scan`, {
+            const res = await fetch(`${API_BASE}/api/batch-anomaly-scan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ symbols: QUICK_SYMBOLS }),

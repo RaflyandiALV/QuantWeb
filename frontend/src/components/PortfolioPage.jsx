@@ -8,7 +8,7 @@ import {
     RefreshCw, PieChart, BarChart3, Clock
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 const PortfolioPage = () => {
     const [summary, setSummary] = useState(null);
@@ -21,9 +21,9 @@ const PortfolioPage = () => {
         setLoading(true);
         try {
             const [sumRes, eqRes, pnlRes] = await Promise.allSettled([
-                fetch(`${API_URL}/api/portfolio/summary`),
-                fetch(`${API_URL}/api/portfolio/equity-curve?days=30`),
-                fetch(`${API_URL}/api/portfolio/daily-pnl?days=30`)
+                fetch(`${API_BASE}/api/portfolio/summary`),
+                fetch(`${API_BASE}/api/portfolio/equity-curve?days=30`),
+                fetch(`${API_BASE}/api/portfolio/daily-pnl?days=30`)
             ]);
 
             if (sumRes.status === 'fulfilled' && sumRes.value.ok) setSummary(await sumRes.value.json());
@@ -95,7 +95,7 @@ const PortfolioPage = () => {
                         <PieChart size={20} className="text-green-400" /> Portfolio Dashboard
                     </h2>
                     <div className={`px-3 py-1 rounded-full text-xs font-bold border ${mode === 'TESTNET' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>
-                        {mode === 'TESTNET' ? '🧪 TESTNET' : '⚠️ PUBLIC'}
+                        {mode === 'TESTNET' ? ' TESTNET' : ' PUBLIC'}
                     </div>
                 </div>
                 <button onClick={fetchAll} disabled={loading} className="flex items-center gap-1 text-xs text-gray-400 hover:text-cyan-400 transition px-3 py-1.5 rounded-lg border border-gray-700 hover:border-cyan-500/30">
@@ -175,7 +175,7 @@ const PortfolioPage = () => {
                     </h3>
                     {equityCurve.length === 0 ? (
                         <div className="text-center py-16 text-gray-600">
-                            <div className="text-4xl mb-3">📈</div>
+                            <div className="text-4xl mb-3"></div>
                             <p className="text-sm">No equity data yet. Snapshots are taken every 5 minutes.</p>
                             <p className="text-xs text-gray-700 mt-1">The equity curve will appear here once enough data is collected.</p>
                         </div>
@@ -207,7 +207,7 @@ const PortfolioPage = () => {
                     </h3>
                     {dailyPnl.length === 0 ? (
                         <div className="text-center py-16 text-gray-600">
-                            <div className="text-4xl mb-3">📊</div>
+                            <div className="text-4xl mb-3"></div>
                             <p className="text-sm">No PnL data yet. Daily PnL is calculated from equity snapshots.</p>
                         </div>
                     ) : (
@@ -237,7 +237,7 @@ const PortfolioPage = () => {
 
                 {(summary?.positions || []).length === 0 ? (
                     <div className="text-center py-12 border-2 border-dashed border-gray-800 rounded-xl">
-                        <div className="text-4xl mb-3">💼</div>
+                        <div className="text-4xl mb-3"></div>
                         <p className="text-gray-500 text-sm">No positions found on {mode}.</p>
                         <p className="text-xs text-gray-600 mt-1">Positions will appear here after the bot executes trades.</p>
                     </div>
@@ -278,7 +278,7 @@ const PortfolioPage = () => {
 
             {/* Footer info */}
             <div className="mt-6 bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
-                <h4 className="font-bold text-blue-400 text-sm mb-1">📸 Snapshots</h4>
+                <h4 className="font-bold text-blue-400 text-sm mb-1"> Snapshots</h4>
                 <p className="text-xs text-blue-200/80 leading-relaxed">
                     Portfolio equity is recorded every 5 minutes. The equity curve and daily PnL charts are built from these snapshots.
                     The more data collected, the more detailed the charts become.

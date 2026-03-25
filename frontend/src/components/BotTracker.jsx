@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TrendingUp, Activity, Play, StopCircle, MoreHorizontal, RefreshCw, Clock, DollarSign, BarChart3, Wallet, ArrowUpCircle, ArrowDownCircle, Zap } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 
 const BotTracker = () => {
     const [botStatus, setBotStatus] = useState(null);
@@ -15,9 +16,9 @@ const BotTracker = () => {
         try {
             setLoading(true);
             const [statusRes, historyRes, portfolioRes] = await Promise.allSettled([
-                fetch(`${API_URL}/api/bot-status`),
-                fetch(`${API_URL}/api/trade-history?limit=20`),
-                fetch(`${API_URL}/api/portfolio`)
+                fetch(`${API_BASE}/api/bot-status`),
+                fetch(`${API_BASE}/api/trade-history?limit=20`),
+                fetch(`${API_BASE}/api/portfolio`)
             ]);
 
             if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
@@ -58,7 +59,7 @@ const BotTracker = () => {
             <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center gap-3">
                     <div className={`px-3 py-1 rounded-full text-xs font-bold border ${mode === 'TESTNET' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>
-                        {mode === 'TESTNET' ? '🧪 TESTNET MODE' : '⚠️ PUBLIC MODE (No Trading)'}
+                        {mode === 'TESTNET' ? ' TESTNET MODE' : ' PUBLIC MODE (No Trading)'}
                     </div>
                     {mode === 'TESTNET' && (
                         <span className="text-xs text-gray-500">Demo money — testnet.binance.vision</span>
@@ -121,7 +122,7 @@ const BotTracker = () => {
             {/* Error State */}
             {error && (
                 <div className="bg-red-900/20 border border-red-500/30 text-red-400 p-4 rounded-xl text-sm mb-6">
-                    ⚠️ {error}
+                     {error}
                 </div>
             )}
 
@@ -184,7 +185,7 @@ const BotTracker = () => {
                         </div>
 
                         <div className="mt-6 bg-blue-900/10 border border-blue-500/20 p-4 rounded-xl">
-                            <h4 className="font-bold text-blue-400 text-sm mb-2">💡 How it Works</h4>
+                            <h4 className="font-bold text-blue-400 text-sm mb-2"> How it Works</h4>
                             <p className="text-xs text-blue-200/80 leading-relaxed">
                                 The bot scans your Watchlist every 15 minutes. When a strategy generates a signal on the latest candle, it calculates position size (1% risk) and executes on Binance Testnet.
                             </p>

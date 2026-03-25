@@ -87,7 +87,7 @@ const DashboardPage = () => {
     const [scanProgress, setScanProgress] = useState(0); // 0 to 100 Progress Bar
 
     // --- ANALYTICS STATE (NEW) ---
-    const [viewMode, setViewMode] = useState('BACKTEST'); // Driven by sidebar
+    const [viewMode, setViewMode] = useState('CORE'); // Driven by sidebar
     const [analyticsData, setAnalyticsData] = useState(null);
     const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
     const [selectedAnalyticsSector, setSelectedAnalyticsSector] = useState("ALL_SECTORS");
@@ -140,12 +140,23 @@ const DashboardPage = () => {
             lineColor: '#3b82f6', topColor: 'rgba(59, 130, 246, 0.4)', bottomColor: 'rgba(59, 130, 246, 0.0)'
         });
 
-        // C. Sync Logic (Agar kedua chart bergerak bersamaan)
+        // C. Sync Logic — Time-based sync (handles different data densities)
         const priceTimeScale = chartPrice.timeScale();
         const equityTimeScale = chartEquity.timeScale();
 
-        priceTimeScale.subscribeVisibleLogicalRangeChange(range => { if (range) equityTimeScale.setVisibleLogicalRange(range); });
-        equityTimeScale.subscribeVisibleLogicalRangeChange(range => { if (range) priceTimeScale.setVisibleLogicalRange(range); });
+        let isSyncing = false;
+        priceTimeScale.subscribeVisibleLogicalRangeChange(range => {
+            if (isSyncing || !range) return;
+            isSyncing = true;
+            try { equityTimeScale.setVisibleLogicalRange(range); } catch(_) { /* sync error ok */ }
+            isSyncing = false;
+        });
+        equityTimeScale.subscribeVisibleLogicalRangeChange(range => {
+            if (isSyncing || !range) return;
+            isSyncing = true;
+            try { priceTimeScale.setVisibleLogicalRange(range); } catch(_) { /* sync error ok */ }
+            isSyncing = false;
+        });
 
         // D. Responsive Resize
         const resizeObserver = new ResizeObserver(entries => {
@@ -167,21 +178,54 @@ const DashboardPage = () => {
         };
     }, []);
 
-    // Load cached scan data on startup (instant UI)
-    useEffect(() => {
-        fetch(`${BASE_URL}/api/last-scan`)
-            .then(res => res.json())
-            .then(data => {
-                if (data.cached && data.sectors && Object.keys(data.sectors).length > 0) {
+    // =================================================================================
+    // 1b. SCANNER STREAMING & AUTO-LOAD LOGIC
+    // =================================================================================
+    
+    // Fetch current scan status (used for both initial load and polling)
+    const fetchScanStatus = async (direction = 'LONG') => {
+        try {
+            // Map "COMBINED" to "LONG" for scanner as scanner only supports pure directions
+            const scanDir = direction === 'SHORT' ? 'SHORT' : 'LONG';
+            const res = await fetch(`${BASE_URL}/api/scan-status?direction=${scanDir}`);
+            if (res.ok) {
+                const data = await res.json();
+                
+                if (data.sectors && Object.keys(data.sectors).length > 0) {
                     setScanResults(data.sectors);
-                    if (data.elite_signals?.length > 0) {
-                        setEliteSignals(data.elite_signals);
-                    }
-                    console.log(`[CACHE] Loaded ${data.total_results} results from last scan (${data.last_scan_time})`);
                 }
-            })
-            .catch(() => console.log('[CACHE] No cached scan data available'));
-    }, []);
+                if (data.elite_signals) {
+                    setEliteSignals(data.elite_signals);
+                }
+                
+                if (data.status === 'scanning') {
+                    setIsScanning(true);
+                    setScanProgress(data.progress || 0);
+                } else {
+                    setIsScanning(false);
+                    setScanProgress(100);
+                }
+            }
+        } catch (err) {
+            console.error('[SCANNER] Status check failed:', err);
+        }
+    };
+
+    // Auto-load cached data or update when direction (pnlFilter) changes
+    useEffect(() => {
+        fetchScanStatus(pnlFilter);
+    }, [pnlFilter]);
+
+    // Polling mechanism when scanning is active
+    useEffect(() => {
+        let interval;
+        if (isScanning) {
+            interval = setInterval(() => {
+                fetchScanStatus(pnlFilter);
+            }, 3000); // Poll every 3 seconds
+        }
+        return () => clearInterval(interval);
+    }, [isScanning, pnlFilter]);
 
     // =================================================================================
     // 2. BACKEND API CALLS
@@ -236,7 +280,7 @@ const DashboardPage = () => {
 
             if (!res.ok) {
                 const err = await res.json();
-                if (res.status === 404) { alert(`⚠️ ${err.detail}`); setLoading(false); return; }
+                if (res.status === 404) { alert(` ${err.detail}`); setLoading(false); return; }
                 throw new Error(err.detail || "Error");
             }
 
@@ -305,7 +349,6 @@ const DashboardPage = () => {
     // --- GEM SELECTION HANDLER ---
     const handleGemSelect = (gem) => {
         // Parse Strategy and Direction from gem.best_strategy
-        // Format: "MOMENTUM (SHORT)" or "GRID (LONG)"
         let strategy = "MULTITIMEFRAME";
         let direction = "LONG";
 
@@ -320,13 +363,14 @@ const DashboardPage = () => {
             symbol: gem.symbol,
             strategy: strategy,
             direction: direction,
-            timeframe: "1h", // Scanner uses 1h usually
-            period: "1y"
+            timeframe: gem.timeframe || "1h",
+            period: gem.period || "1y"
         }));
 
-        // Optional: Auto run backtest or scroll to top?
-        // Let's scroll to top
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Auto-scroll to BacktestLab section and run
+        const backtestSection = document.getElementById('core-backtest-section');
+        if (backtestSection) backtestSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => document.getElementById('run-btn')?.click(), 300);
     };
 
     // --- FETCH MARKET ANALYTICS (NEW) ---
@@ -353,18 +397,15 @@ const DashboardPage = () => {
         }
     };
 
-    // --- SMART SCANNER — PARALLEL BATCH (UPDATED) ---
+    // --- SMART SCANNER — STREAMING BATCH ---
     const handleScanMarket = async (isForceReset = false) => {
         setIsScanning(true);
-        setScanProgress(0);
-        setScanResults({});
-        setEliteSignals([]);
+        setScanProgress(5);
         setViewMode('SCANNER');
 
         try {
-            // Use batch scan-all endpoint — processes all sectors in parallel
-            setScanProgress(10); // Show initial progress
-            const res = await fetch(`${BASE_URL}/api/scan-all`, {
+            // Trigger background scan
+            const res = await fetch(`${BASE_URL}/api/scan-start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -377,26 +418,16 @@ const DashboardPage = () => {
             });
 
             if (res.ok) {
-                const data = await res.json();
-                setScanResults(data.sectors || {});
-
-                // Sort and set elite signals
-                const allElites = data.elite_signals || [];
-                allElites.sort((a, b) => b.win_rate - a.win_rate || b.trades - a.trades);
-                setEliteSignals(allElites.slice(0, 10));
-
-                console.log(`✅ Scan complete: ${data.total_results} results in ${data.scan_time_seconds}s`);
+                console.log('Background scan started successfully');
+                // Polling useEffect will automatically pick it up and update UI
             }
         } catch (err) {
-            console.error('Scan error:', err);
+            console.error('Scan trigger error:', err);
+            setIsScanning(false);
         }
-
-        setScanProgress(100);
 
         // Auto Fetch Analytics
         fetchAnalytics("ALL_SECTORS");
-
-        setIsScanning(false);
     };
 
     // --- EVENT HANDLERS ---
@@ -404,8 +435,10 @@ const DashboardPage = () => {
 
     const handleWatchlistSelect = (symbol) => {
         setFormData(prev => ({ ...prev, symbol: symbol }));
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        setTimeout(() => document.getElementById('run-btn').click(), 100);
+        // Scroll to backtest section within Core page
+        const backtestSection = document.getElementById('core-backtest-section');
+        if (backtestSection) backtestSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => document.getElementById('run-btn')?.click(), 300);
     };
 
     // --- VIEW CHANGE HANDLER ---
@@ -424,7 +457,7 @@ const DashboardPage = () => {
                 <div className="min-h-screen bg-black text-cyan-50 font-sans p-4 md:p-8 selection:bg-cyan-500 selection:text-black pb-20">
 
                     {/* --- BACKTEST / MATRIX / PNL VIEWS --- */}
-                    <div className={!['BACKTEST', 'MATRIX', 'PNL'].includes(viewMode) ? 'chart-section--hidden' : ''}>
+                    <div id="core-backtest-section" className={!['CORE', 'BACKTEST', 'MATRIX', 'PNL'].includes(viewMode) ? 'chart-section--hidden' : ''}>
 
                         {/* --- HEADER SECTION --- */}
                         <div className="flex flex-col xl:flex-row justify-between items-center mb-8 border-b border-cyan-900/50 pb-6 gap-6 relative">
@@ -442,8 +475,8 @@ const DashboardPage = () => {
                             {/* --- INPUT CONTROL PANEL --- */}
                             <div className="flex flex-col gap-2 items-center">
                                 <div className="flex flex-wrap gap-3 bg-gray-900/40 backdrop-blur-md p-4 rounded-xl border border-cyan-500/30 shadow-[0_0_20px_rgba(8,145,178,0.2)] justify-center items-end">
-                                    <InputGroup label="ASSET" icon="💎"><input name="symbol" value={formData.symbol} onChange={handleChange} className="neon-input w-28 text-center" /></InputGroup>
-                                    <InputGroup label="STRATEGY" icon="⚡">
+                                    <InputGroup label="ASSET" icon=""><input name="symbol" value={formData.symbol} onChange={handleChange} className="neon-input w-28 text-center" /></InputGroup>
+                                    <InputGroup label="STRATEGY" icon="">
                                         <select name="strategy" value={formData.strategy} onChange={handleChange} className="neon-input w-36 cursor-pointer">
                                             <option value="MOMENTUM">Momentum</option>
                                             <option value="MEAN_REVERSAL">Mean Reversal</option>
@@ -457,12 +490,12 @@ const DashboardPage = () => {
                                             <option value="MIX_STRATEGY_PRO">Mix Strategy PRO</option>
                                         </select>
                                     </InputGroup>
-                                    <InputGroup label="TIMEFRAME" icon="⏱️"><select name="timeframe" value={formData.timeframe} onChange={handleChange} className="neon-input w-24 cursor-pointer"><option value="1h">1 H</option><option value="4h">4 H</option><option value="1d">1 D</option><option value="1wk">1 W</option></select></InputGroup>
-                                    <InputGroup label="RANGE" icon="📅"><select name="period" value={formData.period} onChange={handleChange} className="neon-input w-24 cursor-pointer"><option value="1mo">1 M</option><option value="6mo">6 M</option><option value="1y">1 Y</option><option value="2y">2 Y</option><option value="max">Max</option></select></InputGroup>
-                                    <InputGroup label="CAPITAL" icon="💰"><input type="number" name="capital" value={formData.capital} onChange={handleChange} className="neon-input w-24" /></InputGroup>
+                                    <InputGroup label="TIMEFRAME" icon=""><select name="timeframe" value={formData.timeframe} onChange={handleChange} className="neon-input w-24 cursor-pointer"><option value="1h">1 H</option><option value="4h">4 H</option><option value="1d">1 D</option><option value="1wk">1 W</option></select></InputGroup>
+                                    <InputGroup label="RANGE" icon=""><select name="period" value={formData.period} onChange={handleChange} className="neon-input w-24 cursor-pointer"><option value="1mo">1 M</option><option value="6mo">6 M</option><option value="1y">1 Y</option><option value="2y">2 Y</option><option value="max">Max</option></select></InputGroup>
+                                    <InputGroup label="CAPITAL" icon=""><input type="number" name="capital" value={formData.capital} onChange={handleChange} className="neon-input w-24" /></InputGroup>
 
                                     {/* DIRECTION TOGGLE */}
-                                    <InputGroup label="DIRECTION" icon="🎯">
+                                    <InputGroup label="DIRECTION" icon="">
                                         <div className="flex gap-1 h-[42px]">
                                             <button
                                                 type="button"
@@ -618,7 +651,7 @@ const DashboardPage = () => {
                         <div className="mb-12">
                             <div className="flex items-center gap-4 mb-4">
                                 <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                                    📊 PnL Segmentation
+                                     PnL Segmentation
                                 </h2>
                                 <div className="flex gap-1 bg-gray-900/60 p-1 rounded-lg border border-gray-700">
                                     {['COMBINED', 'LONG', 'SHORT'].map(mode => (
@@ -637,7 +670,7 @@ const DashboardPage = () => {
                                                 : 'text-gray-500 hover:text-gray-300'
                                                 }`}
                                         >
-                                            {mode === 'COMBINED' ? '🔄' : mode === 'LONG' ? '📈' : '📉'} {mode}
+                                            {mode === 'COMBINED' ? '' : mode === 'LONG' ? '' : ''} {mode}
                                         </button>
                                     ))}
                                 </div>
@@ -647,7 +680,7 @@ const DashboardPage = () => {
 
                             {pnlError && !dualLoading && (
                                 <div className="text-center py-4 px-6 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
-                                    ⚠️ {pnlError}
+                                     {pnlError}
                                 </div>
                             )}
 
@@ -700,7 +733,7 @@ const DashboardPage = () => {
                     {/* ============================================================= */}
 
                     {/* === SCANNER SIGNALS === */}
-                    {viewMode === 'SCANNER' && (
+                    {['CORE', 'SCANNER'].includes(viewMode) && (
                         <div className="bg-gray-900/20 border border-cyan-900/30 rounded-3xl p-8 relative overflow-hidden mb-12 animate-fade-in-up">
                             <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
                                 <div>
@@ -793,7 +826,7 @@ const DashboardPage = () => {
                                 ))}
                             </div>
                             {isAnalyticsLoading ? (
-                                <div className="text-center py-20 animate-pulse"><div className="text-cyan-400 text-xl font-bold">🚀 Computing Analytics...</div><div className="text-gray-500 text-sm mt-2">Aggregating cross-sector performance data.</div></div>
+                                <div className="text-center py-20 animate-pulse"><div className="text-cyan-400 text-xl font-bold"> Computing Analytics...</div><div className="text-gray-500 text-sm mt-2">Aggregating cross-sector performance data.</div></div>
                             ) : (
                                 <MarketAnalytics data={analyticsData} />
                             )}
@@ -816,7 +849,7 @@ const DashboardPage = () => {
                     {viewMode === 'FUND' && <div className="animate-fade-in-up"><FundDashboard /></div>}
 
                     {/* === ELITE GEMS === */}
-                    {viewMode === 'ELITE' && <div className="animate-fade-in-up"><EliteSignals onGemSelect={handleGemSelect} /></div>}
+                    {['CORE', 'ELITE'].includes(viewMode) && <div className="animate-fade-in-up"><EliteSignals onGemSelect={handleGemSelect} /></div>}
 
                     {/* === MACRO INTELLIGENCE === */}
                     {viewMode === 'MACRO' && <div className="animate-fade-in-up"><MacroDashboard /></div>}
@@ -831,7 +864,7 @@ const DashboardPage = () => {
                     {viewMode === 'AI_INSIGHTS' && <div className="animate-fade-in-up"><AIDashboard /></div>}
 
                     {/* === WATCHLIST === */}
-                    {viewMode === 'WATCHLIST' && (
+                    {['CORE', 'WATCHLIST'].includes(viewMode) && (
                         <div className="bg-gray-900/40 backdrop-blur-md border border-cyan-500/30 rounded-3xl p-8 shadow-[0_0_20px_rgba(8,145,178,0.1)] animate-fade-in-up">
                             <Watchlist onSelectAsset={handleWatchlistSelect} />
                         </div>

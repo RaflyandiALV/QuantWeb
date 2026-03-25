@@ -12,6 +12,7 @@ import time
 import json
 import sqlite3
 import threading
+from db_utils import get_db_connection
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -57,12 +58,14 @@ class PaperTrader:
         # Strategy assignment per symbol
         self.symbol_strategies = {}
 
-        # Runtime state
-        self._running = False
+        # Runtime state — using threading.Event for proper thread signaling
+        self._stop_event = threading.Event()
         self._thread = None
         self._cycle_count = 0
         self._last_cycle_time = None
         self._errors = []
+        self._event_log = []  # Live event stream for UI
+        self._max_events = 100
 
         # Init database
         self._init_db()
@@ -77,7 +80,7 @@ class PaperTrader:
     def _init_db(self):
         """Create paper trading database tables."""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_db_connection(DB_PATH)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS paper_cycles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,10 +122,10 @@ class PaperTrader:
 
     def start(self) -> dict:
         """Start the paper trading loop in a background thread."""
-        if self._running:
+        if self._thread is not None and self._thread.is_alive():
             return {"status": "already_running", "cycles": self._cycle_count}
 
-        self._running = True
+        self._stop_event.clear()  # Reset stop signal before launching
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
@@ -135,13 +138,12 @@ class PaperTrader:
         }
 
     def stop(self) -> dict:
-        """Stop the paper trading loop."""
-        if not self._running:
+        """Stop the paper trading loop gracefully."""
+        if self._thread is None or not self._thread.is_alive():
             return {"status": "not_running"}
 
-        self._running = False
-        if self._thread:
-            self._thread.join(timeout=5)
+        self._stop_event.set()  # Signal background thread to exit
+        self._thread.join(timeout=30)  # Up to 30s: one full cycle can take ~15s
 
         return {
             "status": "stopped",
@@ -163,7 +165,7 @@ class PaperTrader:
         win_rate = (wins / total * 100) if total > 0 else 0
 
         return {
-            "running": self._running,
+            "running": self._thread is not None and self._thread.is_alive(),
             "cycle_count": self._cycle_count,
             "last_cycle": self._last_cycle_time,
             "watchlist": self.watchlist,
@@ -178,6 +180,7 @@ class PaperTrader:
             "wins": wins,
             "losses": losses,
             "recent_errors": self._errors[-5:],
+            "recent_events": self._event_log[-30:],
             "timestamp": datetime.now().isoformat()
         }
 
@@ -189,7 +192,7 @@ class PaperTrader:
         """Main trading loop — runs in background thread."""
         print(f"[PAPER TRADER] 🚀 Loop started at {datetime.now().isoformat()}")
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 self._run_cycle()
             except Exception as e:
@@ -198,13 +201,10 @@ class PaperTrader:
                     "time": datetime.now().isoformat(),
                     "error": error_msg
                 })
-                print(f"[PAPER TRADER] ❌ {error_msg}")
+                print(f"[PAPER TRADER] [ERROR] {error_msg}")
 
-            # Wait for next cycle
-            for _ in range(self.interval):
-                if not self._running:
-                    break
-                time.sleep(1)
+            # Wait for next cycle — exits immediately if stop() is called
+            self._stop_event.wait(timeout=self.interval)
 
         print(f"[PAPER TRADER] ⏹️ Loop stopped. Total cycles: {self._cycle_count}")
 
@@ -226,42 +226,78 @@ class PaperTrader:
         # Check SL/TP for all open positions
         self._check_all_positions()
 
+    def _add_event(self, symbol, event_type, message, detail=None):
+        """Add a live event to the stream for the frontend."""
+        event = {
+            "time": datetime.now().isoformat(),
+            "symbol": symbol,
+            "type": event_type,  # scan, strategy, decision, execute, hold, error
+            "message": message,
+            "detail": detail
+        }
+        self._event_log.append(event)
+        if len(self._event_log) > self._max_events:
+            self._event_log = self._event_log[-self._max_events:]
+
     def _process_symbol(self, symbol: str):
         """Process one symbol through the full pipeline."""
 
         # Step 1: FETCH — Get microstructure data
+        self._add_event(symbol, "scan", f"Fetching market data for {symbol}...")
         raw_data = self.data_provider.get_full_snapshot(symbol)
 
         # Step 2: COMPUTE — Generate features
+        self._add_event(symbol, "scan", f"Computing alpha features for {symbol}...")
         features_result = self.feature_engine.compute_all_features(symbol, raw_data)
 
         # Step 3: Get current price
         price = self.executor.get_current_price(symbol)
         if not price:
-            print(f"   ❌ {symbol}: Cannot get price, skipping")
+            self._add_event(symbol, "error", f"Cannot fetch price for {symbol}, skipping")
+            print(f"   [ERROR] {symbol}: Cannot get price, skipping")
             return
 
         # Step 3.5: Strategy Auto-Detection (if not yet assigned)
         if symbol not in self.symbol_strategies:
+            self._add_event(symbol, "strategy", f"Auto-detecting best strategy for {symbol}...")
             print(f"   🔍 {symbol}: Auto-detecting best strategy...")
             best_strat = self._detect_best_strategy(symbol)
             self.symbol_strategies[symbol] = best_strat
+            self._add_event(symbol, "strategy", f"Best strategy: {best_strat}", {"strategy": best_strat})
             print(f"   🎯 {symbol}: Best strategy detected -> {best_strat}")
             
         assigned_strategy = self.symbol_strategies[symbol]
 
         # Step 4: DECIDE — AI makes a decision
+        self._add_event(symbol, "decision", f"Asking AI for decision on {symbol} @ ${price:,.2f}...")
         market_snapshot = {
             **features_result,
             "price": price,
             "regime": features_result.get("signals", {}).get("overall_bias", "NEUTRAL"),
-            "assigned_strategy": assigned_strategy  # Pass to AI Brain for context
+            "assigned_strategy": assigned_strategy
         }
         decision = self.ai_brain.make_decision(symbol, market_snapshot)
 
+        reasoning = decision.get('reasoning') or decision.get('_fallback_reason') or 'No reasoning provided'
+        confidence = decision.get('confidence', 0)
+
         print(f"   🧠 {symbol}: {decision['decision']} "
-              f"(confidence: {decision.get('confidence', 0)}%) "
+              f"(confidence: {confidence}%) "
               f"[{self.ai_brain.mode}]")
+
+        self._add_event(symbol, "decision",
+            f"AI: {decision['decision']} ({confidence}% confidence)",
+            {
+                "decision": decision['decision'],
+                "confidence": confidence,
+                "reasoning": reasoning,
+                "strategy": assigned_strategy,
+                "price": price,
+                "entry": decision.get('entry'),
+                "sl": decision.get('stop_loss'),
+                "tp": decision.get('take_profit'),
+            }
+        )
 
         # Step 5: EXECUTE — Only if decision is actionable
         execution_result = None
@@ -271,6 +307,7 @@ class PaperTrader:
             has_position = any(p['symbol'] == symbol for p in positions)
 
             if has_position:
+                self._add_event(symbol, "hold", f"{symbol}: Already has open position, skipping")
                 print(f"   📌 {symbol}: Already has open position, skipping")
             else:
                 execution_result = self.executor.open_position(
@@ -280,12 +317,26 @@ class PaperTrader:
                     stop_loss=decision.get('stop_loss'),
                     take_profit=decision.get('take_profit')
                 )
+                self._add_event(symbol, "execute",
+                    f"OPENED {decision['decision']} {symbol} @ ${price:,.2f}",
+                    {
+                        "side": decision['decision'],
+                        "entry": price,
+                        "sl": decision.get('stop_loss'),
+                        "tp": decision.get('take_profit'),
+                        "amount": self.trade_amount,
+                    }
+                )
                 print(f"   📊 {symbol}: Executed {decision['decision']} | "
                       f"Entry: ${price:,.2f} | "
                       f"SL: ${decision.get('stop_loss', 0):,.2f} | "
                       f"TP: ${decision.get('take_profit', 0):,.2f}")
         else:
-            print(f"   ⏸️ {symbol}: HOLD — no action taken")
+            self._add_event(symbol, "hold",
+                f"{symbol}: HOLD — {reasoning[:120]}",
+                {"reasoning": reasoning}
+            )
+            print(f"   [PAUSE] {symbol}: HOLD — no action taken")
 
         # Step 6: LOG — Store cycle data
         self._log_cycle(symbol, features_result, decision, execution_result)
@@ -299,7 +350,7 @@ class PaperTrader:
             if result.get('triggered'):
                 trigger = result.get('trigger', 'UNKNOWN')
                 pnl = result.get('trade', {}).get('pnl', 0)
-                print(f"   ⚡ {symbol}: {trigger} triggered! PnL: ${pnl:,.2f}")
+                print(f"   [FAST] {symbol}: {trigger} triggered! PnL: ${pnl:,.2f}")
 
                 # Log closed position
                 self._log_position_close(symbol, result)
@@ -315,7 +366,7 @@ class PaperTrader:
         try:
             df_raw = self.strategy_engine.fetch_data(symbol, requested_period="1y", interval="1h")
             if df_raw is None or len(df_raw) < 50:
-                print(f"   ⚠️ Could not fetch enough data for {symbol} backtest, defaulting to MULTITIMEFRAME_PRO")
+                print(f"   [WARN] Could not fetch enough data for {symbol} backtest, defaulting to MULTITIMEFRAME_PRO")
                 return "MULTITIMEFRAME_PRO"
                 
             best_strat = "MULTITIMEFRAME_PRO"
@@ -336,7 +387,7 @@ class PaperTrader:
                     
             return best_strat
         except Exception as e:
-            print(f"   ⚠️ Strategy detection error for {symbol}: {e}")
+            print(f"   [WARN] Strategy detection error for {symbol}: {e}")
             return "MULTITIMEFRAME_PRO"
 
     # =========================================================================
@@ -346,7 +397,7 @@ class PaperTrader:
     def _log_cycle(self, symbol, features, decision, execution):
         """Log a trading cycle to database."""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_db_connection(DB_PATH)
             conn.execute("""
                 INSERT INTO paper_cycles
                 (timestamp, symbol, cycle_number, features_json, decision_json, execution_json)
@@ -368,7 +419,7 @@ class PaperTrader:
         """Log a closed position to database."""
         try:
             trade = result.get('trade', {})
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_db_connection(DB_PATH)
             conn.execute("""
                 INSERT INTO paper_positions
                 (timestamp, symbol, side, entry_price, exit_price, qty,
@@ -403,8 +454,7 @@ class PaperTrader:
         memory_trades = self.executor.get_trade_history()
 
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection(DB_PATH)
             rows = conn.execute(
                 "SELECT * FROM paper_positions ORDER BY id DESC LIMIT ?",
                 (limit,)
@@ -421,8 +471,7 @@ class PaperTrader:
     def get_cycles(self, symbol: str = None, limit: int = 50) -> list:
         """Get cycle history from database."""
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
+            conn = get_db_connection(DB_PATH)
 
             if symbol:
                 rows = conn.execute(
@@ -444,41 +493,31 @@ class PaperTrader:
     def run_single_cycle(self) -> dict:
         """
         Run a single cycle manually (for API calls).
-        Returns results without needing to start the background loop.
+        Reuses _process_symbol() so that event log is populated for the Live Feed.
         """
-        results = {}
+        self._cycle_count += 1
+        self._add_event("SYSTEM", "scan", f"▶ Manual cycle #{self._cycle_count} started for {len(self.watchlist)} symbols")
+
+        errors = {}
         for symbol in self.watchlist:
             try:
-                # Fetch + Compute
-                raw_data = self.data_provider.get_full_snapshot(symbol)
-                features = self.feature_engine.compute_all_features(symbol, raw_data)
-                price = self.executor.get_current_price(symbol)
-
-                if not price:
-                    results[symbol] = {"error": "Cannot fetch price"}
-                    continue
-
-                # Decide
-                snapshot = {
-                    **features,
-                    "price": price,
-                    "regime": features.get("signals", {}).get("overall_bias", "NEUTRAL")
-                }
-                decision = self.ai_brain.make_decision(symbol, snapshot)
-
-                results[symbol] = {
-                    "price": price,
-                    "features_summary": features.get("signals", {}),
-                    "decision": decision,
-                    "timestamp": datetime.now().isoformat()
-                }
+                self._process_symbol(symbol)
             except Exception as e:
-                results[symbol] = {"error": str(e)}
+                self._add_event(symbol, "error", f"Error processing {symbol}: {str(e)[:100]}")
+                errors[symbol] = str(e)
+
+        # Check SL/TP for open positions
+        self._check_all_positions()
+
+        self._last_cycle_time = datetime.now().isoformat()
+        self._add_event("SYSTEM", "scan", f"[OK] Manual cycle #{self._cycle_count} completed")
 
         return {
             "cycle": self._cycle_count,
-            "results": results,
+            "symbols_processed": len(self.watchlist),
+            "errors": errors,
             "balance": self.executor.get_balance(),
+            "recent_events": self._event_log[-20:],
             "timestamp": datetime.now().isoformat()
         }
 
@@ -511,4 +550,4 @@ if __name__ == "__main__":
             print(f"   {sym}: ERROR - {data['error']}")
 
     print(f"\n💰 Balance: ${result['balance']['total']:,.2f}")
-    print("\n✅ Paper trader test completed!")
+    print("\n[OK] Paper trader test completed!")
