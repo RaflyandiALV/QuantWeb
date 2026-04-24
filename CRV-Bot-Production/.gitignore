@@ -1,0 +1,12 @@
+# Security — never commit these
+.env
+bot_state.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+venv/
+.venv/

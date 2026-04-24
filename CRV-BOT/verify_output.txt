@@ -1,0 +1,62 @@
++------------------------------------------------------------+
+|  CRV-USDT Mean Reversion Bot - Backtest 1 Tahun         |
+|  Modal: $10,000  |  Leverage: 2x  |  TF: 4H            |
++------------------------------------------------------------+
+
+[1/6] Fetching 1 year CRV/USDT 4H data from Bybit...
+  -> Trying Perpetual Swap (CRV/USDT:USDT)...
+     ... page 5, 996 candles so far
+     ... page 10, 1991 candles so far
+  [OK] Perpetual Swap: 2190 candles (2025-04-05 to 2026-04-05)
+[2/6] Computing indicators (BB20, RSI14)...
+[3/6] Running backtest engine...
+  [!] Circuit Breaker @ 2025-07-16 04:00 | Equity $46142.15 | DD 52.1% -> Resuming (cooldown 6 candles)
+  [OK] Backtest done: 40 trades | Final equity: $1642138.50
+[4/6] Computing statistics...
+
+=================================================================
+  RINGKASAN BACKTESTING - CRV/USDT Mean Reversion Bot
+=================================================================
+  Modal Awal          : $   10,000.00
+  Equity Akhir        : $1,643,765.83
+  Total Return        : +16337.66%
+  Total P&L           : $ +1633765.83
+
+  Total Trades        : 40
+    - Long            : 19
+    - Short           : 21
+  Win Rate            : 87.5%
+  Profit Factor       : 4.56x
+  Avg Trade Duration  : 199.4 jam
+
+  Max Drawdown        : -63.03%
+  Sharpe Ratio        : 3.93
+  Calmar Ratio        : 259.20
+
+  Stop Loss Hits      : 2
+  Flip Trades         : 37
+  Circuit Breaker     : 1
+=================================================================
+
+  Trade Log (last 15):
+    # Dir       Entry     Exit    P&L ($)    P&L % Reason         Duration
+  --- ------ -------- -------- ---------- -------- -------------- --------
+   26 LONG     0.3865   0.4231 $+68230.46   +9.47% flip           72h
+   27 SHORT    0.4231   0.3607 $+124426.83  +14.75% flip           276h
+   28 LONG     0.3607   0.3701 $+27295.09   +2.61% flip           164h
+   29 SHORT    0.3701   0.3907 $-62845.15   -5.57% flip           516h
+   30 LONG     0.3907   0.4335 $+109411.31  +10.95% flip           24h
+   31 SHORT    0.4335   0.3365 $+267795.88  +22.38% flip           284h
+   32 LONG     0.3365   0.2637 $-364511.73  -21.63% stop_loss      248h
+   33 LONG     0.2304   0.2524 $+97101.41   +9.55% flip           184h
+   34 SHORT    0.2524   0.2421 $+48172.12   +4.08% flip           136h
+   35 LONG     0.2421   0.2426 $ +1942.72   +0.21% flip           144h
+   36 SHORT    0.2426   0.2295 $+68645.36   +5.40% flip           72h
+   37 LONG     0.2295   0.2588 $+178808.03  +12.77% flip           52h
+   38 SHORT    0.2588   0.2198 $+259313.75  +15.07% flip           476h
+   39 LONG     0.2198   0.2346 $+146399.60   +6.73% flip           68h
+   40 SHORT    0.2346   0.2075 $+282067.01  +11.55% flip           64h
+
+[5/6] Creating visualization...
+  [OK] Chart saved: C:\Project Github\QuantTrade-Web-App\CRV-BOT\backtest_result.png
+[6/6] Done! Open backtest_result.png to see the chart.

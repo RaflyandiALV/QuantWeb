@@ -1,0 +1,2 @@
+<class 'ccxt.base.errors.RequestTimeout'>
+bybit GET https://api.bybit.com/v5/asset/coin/query-info?
